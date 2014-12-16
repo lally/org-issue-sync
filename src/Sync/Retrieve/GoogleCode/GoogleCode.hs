@@ -29,11 +29,13 @@ fetch project tags = do
    body <- simpleHTTP (getRequest uri) >>= getResponseBody
 
    -- ID, Pri,	Mstone, ReleaseBlock,	Area,	Status, Owner, Summary, Labels
-   let res = (CSV.decode CSV.HasHeader $ pack body) :: Either String (Vector (Int, Int, String, String, String, String, String, String, String))
+   let res = (CSV.decode CSV.HasHeader $ pack body) :: Either String (Vector CSVRow)
    let xlate stat = maybe Open id $ M.lookup stat $ M.fromList [("assigned", Open), ("closed", Closed), ("open", Open)]
+       makeIssue :: CSVRow -> Issue
        makeIssue (id, prio, mstone, relblock, area, status, owner, summary, labels) =
-         Issue project id owner (xlate $ map toLower status) (map trim $ splitOn "," labels)
+         Issue project id owner (xlate $ map toLower status) (map trim $ splitOn "," labels) summary
    case res of
      Left err -> do putStrLn $ "Failed parse from '" ++ uri ++ "': " ++ err
                     return []
-     Right vals -> return $ map makeIssue $ toList vals
+     Right vals -> do let issues = toList vals :: [CSVRow]
+                      return $ map makeIssue issues

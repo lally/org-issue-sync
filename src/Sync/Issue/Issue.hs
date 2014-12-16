@@ -8,5 +8,6 @@ data Issue = Issue
              , user :: String
              , status :: IssueStatus
              , tags :: [String]
+             , summary :: String
              } deriving (Eq, Show)
 
