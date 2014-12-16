@@ -1,7 +1,7 @@
 module Sync.Retrieve.GoogleCode.GoogleCode where
 
 import qualified Data.Csv as CSV
-import Data.Char (toLower)
+import Data.Char (toLower, isSpace)
 import Data.Vector (Vector, toList)
 import Data.ByteString.Lazy.Char8 (pack)
 import Data.List (intercalate)
@@ -13,6 +13,11 @@ import Network.URI
 
 -- ID%20Pri%20Mstone%20ReleaseBlock%20Area%20Status%20Owner%20Summary
 type CSVRow = (Int, Int, String, String, String, String, String, String, String)
+
+trim :: String -> String
+trim = f . f
+   where f = reverse . dropWhile isSpace
+
 
 -- | Takes a project and a list of tags, returns [Issue]
 fetch :: String -> [String] -> IO ([Issue])
@@ -27,7 +32,7 @@ fetch project tags = do
    let res = (CSV.decode CSV.HasHeader $ pack body) :: Either String (Vector (Int, Int, String, String, String, String, String, String, String))
    let xlate stat = maybe Open id $ M.lookup stat $ M.fromList [("assigned", Open), ("closed", Closed), ("open", Open)]
        makeIssue (id, prio, mstone, relblock, area, status, owner, summary, labels) =
-         Issue project id owner (xlate $ map toLower status) (splitOn "," labels)
+         Issue project id owner (xlate $ map toLower status) (map trim $ splitOn "," labels)
    case res of
      Left err -> do putStrLn $ "Failed parse from '" ++ uri ++ "': " ++ err
                     return []
