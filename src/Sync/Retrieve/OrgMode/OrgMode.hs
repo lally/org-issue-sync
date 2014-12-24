@@ -1,8 +1,11 @@
 module Sync.Retrieve.OrgMode.OrgMode where
+import Sync.Issue.Issue
 
 import Text.ParserCombinators.Parsec
 import Control.Monad
-import Data.List (intercalate)
+import Data.List
+import Data.Maybe (mapMaybe, fromJust)
+import Debug.Trace (trace)
 -- | I don't think that the parser will do everything I want But I can
 -- get pretty close.  Basically, try and parse docs as lists of
 -- headings.  Will that work?  Only one way to find out.  Really
@@ -36,9 +39,9 @@ data Drawer = Drawer
 
 instance Show Drawer where
   show (Drawer name props) =
-    ":" ++ name ++ ":\n"
+    "PP<<:" ++ name ++ ":\n"
     ++ concatMap (\(k,v) -> ":" ++ k ++ ": " ++ v ++ "\n") props
-    ++ ":END:\n"
+    ++ ":END:>>PP\n"
 
 -- |The body of a node has different parts.  We can put tables here,
 -- as well as Babel sections, later.
@@ -62,7 +65,7 @@ data Node = Node
 
 instance Show Node where
   show (Node depth prefixes tags children topic) =
-    stars ++ " " ++ pfx ++ " " ++ topic ++ tgs ++ "\n" ++ rest
+    stars ++ " <" ++ pfx ++ "> " ++ topic ++ "<<" ++ tgs ++ ">>\n" ++ rest
     where
       stars = take depth $ repeat '*'
       pfx = concatMap show prefixes
@@ -83,6 +86,7 @@ data OrgFileElement = OrgFileProperty { fpName :: String,
 
 rstrip xs = reverse $ lstrip $ reverse xs
 lstrip = dropWhile (== ' ')
+strip xs = lstrip $ rstrip xs
 
 {-
 Parsing orgNode
@@ -107,21 +111,21 @@ orgPropDrawer = do manyTill space (char ':') <?> "Property Drawer"
                          return (propName, rstrip $ lstrip value)
                    props <- manyTill orgProperty (
                      try $ manyTill space (string ":END:"))
-                   manyTill anyChar (try newline)
+                   manyTill space newline
                    return $ ChildDrawer $ Drawer drawerName props
 
 -- Any line that isn't a node.
 orgBodyLine :: GenParser Char st NodeChild
 orgBodyLine = do firstChar <- satisfy (\a -> (a /= '*') && (a /= '#'))
-                 rest <- manyTill anyChar newline
-                 if firstChar == '\n'
-                   then return $ ChildText ""
-                   else return $ ChildText $ firstChar : rest
+                 if firstChar /= '\n'
+                   then do rest <- manyTill anyChar newline
+                           return $ ChildText $ firstChar : rest
+                   else return $ ChildText ""
 
 -- (Depth, prefixes, tags, topic)
 orgNodeHead :: GenParser Char st (Int, [Prefix], [String], String)
 orgNodeHead = do let tagList = char ':' >> word `endBy1` char ':'
-                       where word = many1 (letter <|> char '-')
+                       where word = many1 (letter <|> char '-' <|> digit)
 
                      orgPrefix = do pfx <- string "TODO" <|> string "DONE" <|>
                                            string "OPEN" <|> string "CLOSED"
@@ -138,12 +142,13 @@ orgNodeHead = do let tagList = char ':' >> word `endBy1` char ':'
                  many space
                  topic <- manyTill anyChar (try $ lookAhead orgSuffix)
                  tags <- orgSuffix
-                 return (depth, prefixes, tags, topic)
+                 return (depth, prefixes, tags, strip topic)
 
 orgNode = do (depth, prefixes, tags, topic) <- orgNodeHead
              body <- many ((try orgPropDrawer)
-                           <|> orgBodyLine)
-                           <?> "Node Body"
+                           <|> orgBodyLine
+                           <|> (do {newline; return $ ChildText ""})
+                           <?> "Node Body")
              return $ Node depth prefixes tags body topic
 
 orgProperty = do string "#+"
@@ -165,7 +170,6 @@ orgFile = do
       title = if length titles > 0
                  then fpValue $ last titles
                  else ""
-      
       props = filter (\x -> (not $ titleProp x) && (isProp x)) elements
       nodes = filter nodeProp elements
       isProp (OrgFileProperty _ _) = True
@@ -185,3 +189,58 @@ parseOrgFile fname = do
   input <- readFile fname
   return $ parse orgFile fname input
 
+getOrgIssue :: Node -> Maybe Issue
+getOrgIssue n =
+  let draw = propDrawer n
+      hasOrigin = hasKey "ISSUEORIGIN" draw
+      hasNum = hasKey "ISSUENUM" draw
+      hasUser = hasKey "ISSUEUSER" draw
+      drawerOf (ChildDrawer d) = Just d
+      drawerOf _ = Nothing
+      drawersOf nd = mapMaybe drawerOf $ nChildren nd
+      drawerNameIs s d = drName d == s
+      hasPropDrawer nd = any (drawerNameIs "PROPERTIES") $ drawersOf nd
+      propDrawer nd = head $ filter (drawerNameIs "PROPERTIES") $ drawersOf nd
+      hasKey k d = let matched = filter (\(kk,_) -> kk == k) $ drProperties d
+                   in length matched > 0
+      valOf k d = let matched = filter (\(kk,_) -> kk == k) $ drProperties d
+                  in head $ map snd matched
+      mapStatus [] = Open
+      mapStatus ((Prefix s):ps) = case s of
+        "ACTIVE" -> Active
+        "CLOSED" -> Closed
+        "DONE" -> Closed
+        "TODO" -> Open
+        "OPEN" -> Open
+        _ -> Open
+  in if (hasPropDrawer n && hasOrigin && hasNum && hasUser)
+     then Just $ Issue (valOf "ISSUEORIGIN" draw) (read $ valOf "ISSUENUM" draw) (
+       valOf "ISSUEUSER" draw) (mapStatus $ nPrefixes n) (nTags n) (nTopic n)
+     else Nothing
+
+getOrgIssues :: FilePath -> IO [Issue]
+getOrgIssues fname = do
+  res <- parseOrgFile fname
+  case res of
+    Left e -> do putStrLn $ show e
+                 return []
+    Right orgFile -> return $ mapMaybe getOrgIssue $ orgNodes orgFile 
+
+data IssueChanges = IssueChanges
+                    { newIssues :: [Issue]
+                    , changes :: [(String, Int, [IssueDelta])]
+                    } deriving (Eq, Show)
+
+getIssueDeltas :: [Issue] -> [Issue] -> IssueChanges
+getIssueDeltas prior cur =
+  let priors = zip prior prior
+      curs = zip cur cur
+      sames = intersect prior cur
+      new = cur \\ prior
+      genDelta (p,c) =
+        let changes = issueDelta p c
+        in if length changes > 0
+           then Just (origin p, number p, changes)
+           else Nothing
+      zipLookup vals k = (k, fromJust $ lookup k vals)
+  in IssueChanges new  $ mapMaybe genDelta $ map (zipLookup curs) sames

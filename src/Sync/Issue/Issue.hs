@@ -1,5 +1,5 @@
 module Sync.Issue.Issue where
-
+import Data.Maybe (mapMaybe)
 data IssueStatus = Open | Active | Closed deriving (Eq, Show)
 
 data Issue = Issue
@@ -9,5 +9,23 @@ data Issue = Issue
              , status :: IssueStatus
              , tags :: [String]
              , summary :: String
-             } deriving (Eq, Show)
+             } deriving (Show)
 
+instance Eq Issue where
+  (==) l r = (origin l == origin r) && (number l == number r)
+
+data IssueDelta = IssueDelta { idProperty :: String
+                             , idOldValue :: String
+                             , idNewValue :: String } deriving (Eq, Show)
+
+issueDelta :: Issue -> Issue -> [IssueDelta]
+issueDelta left right =
+  let funcs = [ ("User", user)
+              , ("Status", show . status)
+              , ("Tags", show . tags)
+              , ("Summary", summary) ]
+      applyF l r (nm, propFn)  =
+        if (propFn l /= propFn r)
+        then Just $ IssueDelta nm  (propFn l) (propFn r)
+        else Nothing
+  in mapMaybe (applyF left right) funcs

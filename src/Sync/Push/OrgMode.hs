@@ -9,18 +9,20 @@ import Data.List (intercalate)
 makeIssueOrgHeading :: Int -> Issue -> String
 makeIssueOrgHeading depth issue =
   let templateStr = unlines [
-        "$prefix$ $TODO$ $origin$/$num$: $summary$ $tags$",
+        "$prefix$ $TODO$ $summary$ $tags$",
         "$indent$ :PROPERTIES:",
         "$indent$ :ISSUENUM: $num$",
         "$indent$ :ISSUEORIGIN: $origin$",
         "$indent$ :ISSUEUSER: $user$",
-        "$indent$ :END:"]
+        "$indent$ :END:\n"]
       attribs = [("prefix", take depth $ repeat '*'),
                  ("indent", take depth $ repeat ' '),
                  ("TODO", map toUpper $ show $ status issue),
                  ("num", show $ number issue),
                  ("summary", summary issue),
-                 ("tags", intercalate ":" $ tags issue),
+                 ("tags", if length (tags issue) > 0
+                          then ":" ++ (intercalate ":" $ tags issue) ++ ":"
+                          else ""),
                  ("origin", origin issue),
                  ("user", user issue)]
       template = newSTMP templateStr
