@@ -125,10 +125,11 @@ orgBodyLine = do firstChar <- satisfy (\a -> (a /= '*') && (a /= '#'))
 -- (Depth, prefixes, tags, topic)
 orgNodeHead :: GenParser Char st (Int, [Prefix], [String], String)
 orgNodeHead = do let tagList = char ':' >> word `endBy1` char ':'
-                       where word = many1 (letter <|> char '-' <|> digit)
+                       where word = many1 (letter <|> char '-' <|> digit <|> char '_')
 
                      orgPrefix = do pfx <- string "TODO" <|> string "DONE" <|>
-                                           string "OPEN" <|> string "CLOSED"
+                                           string "OPEN" <|> string "CLOSED" <|>
+                                           string "ACTIVE"
                                     return $ [Prefix pfx]
 
                      orgSuffix = (do tags <- tagList
@@ -159,12 +160,12 @@ orgProperty = do string "#+"
                  return $ OrgFileProperty name value
 
 orgFileElement :: GenParser Char st OrgFileElement
-orgFileElement = orgProperty <|>
-                 (do node <- orgNode
-                     return $ OrgTopLevel node) <?> "file element"
+orgFileElement = do orgProperty <|> (do node <- orgNode
+                                        return $ OrgTopLevel node) <?> "file element"
 
 orgFile :: GenParser Char st OrgFile
 orgFile = do
+  many orgBodyLine
   elements <- many orgFileElement
   let titles = filter titleProp elements
       title = if length titles > 0
@@ -184,9 +185,8 @@ orgFile = do
 orgHead :: String -> Either ParseError Node
 orgHead s = parse orgNode "input" s
 
-parseOrgFile :: FilePath -> IO (Either ParseError OrgFile)
-parseOrgFile fname = do
-  input <- readFile fname
+parseOrgFile :: FilePath -> String -> IO (Either ParseError OrgFile)
+parseOrgFile fname input = do
   return $ parse orgFile fname input
 
 getOrgIssue :: Node -> Maybe Issue
@@ -218,9 +218,9 @@ getOrgIssue n =
        valOf "ISSUEUSER" draw) (mapStatus $ nPrefixes n) (nTags n) (nTopic n)
      else Nothing
 
-getOrgIssues :: FilePath -> IO [Issue]
-getOrgIssues fname = do
-  res <- parseOrgFile fname
+getOrgIssues :: FilePath -> String -> IO [Issue]
+getOrgIssues fname text = do
+  res <- parseOrgFile fname text
   case res of
     Left e -> do putStrLn $ show e
                  return []

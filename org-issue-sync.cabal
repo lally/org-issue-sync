@@ -17,7 +17,7 @@ synopsis:            Synchronize issue trackers with Org Mode files.
 
 -- A longer description of the package.
 description:         Downloads issue lists from different trackers (github,
-		     google code) and synchronizes them against an org-mode
+                     google code) and synchronizes them against an org-mode
                      file.  Can run emacs afterwards to post-process.
 
 -- URL for the project homepage or repository.
@@ -65,7 +65,8 @@ executable org-issue-sync
   build-depends:       base >=4.7 && <4.8, network >= 2.0, HTTP >= 4000,
                        network-uri >= 2.6, cassava >= 0.4.2.0,
                        bytestring >= 0.10, vector >= 0.10, split >= 0.2.2,
-                       containers >= 0.5, HStringTemplate >= 0.7.3, parsec
+                       containers >= 0.5, HStringTemplate >= 0.7.3, parsec,
+                       github
 
   -- Directories containing source files.
   hs-source-dirs:      src
