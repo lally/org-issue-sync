@@ -27,6 +27,18 @@ import Debug.Trace (trace)
   We'll keep a track of indentation as we go.  It will be used to
 remove leading whitespace, but that's it.
 -}
+-- | Raw data about each line of text.
+data TextLine = TextLine
+                { tlIndent :: Int  -- how long of a whitespace prefix is in tlText?
+                , tlText :: String
+                , tlLineNum :: Int
+                } deriving (Eq)
+
+instance Show TextLine where
+  show tl = (show $tlLineNum tl) ++ ":" ++ (tlText tl)
+
+class TextLineSource s where
+  getTextLines :: s -> [TextLine]
 
 data Prefix = Prefix String deriving (Eq)
 instance Show Prefix where
@@ -35,22 +47,23 @@ instance Show Prefix where
 data Drawer = Drawer
               { drName :: String
               , drProperties :: [(String, String)]
+              , drLines :: [TextLine]
               } deriving (Eq)
 
 instance Show Drawer where
-  show (Drawer name props) =
+  show (Drawer name props _) =
     "PP<<:" ++ name ++ ":\n"
     ++ concatMap (\(k,v) -> ":" ++ k ++ ": " ++ v ++ "\n") props
     ++ ":END:>>PP\n"
 
 -- |Just store the lines of the babel environment.
-data Babel = Babel [String] deriving (Eq, Show)
+data Babel = Babel [TextLine] deriving (Eq, Show)
 
-data Table = Table [String] deriving (Eq, Show)
+data Table = Table [TextLine] deriving (Eq, Show)
 
 -- |The body of a node has different parts.  We can put tables here,
 -- as well as Babel sections, later.
-data NodeChild = ChildText String
+data NodeChild = ChildText TextLine
                | ChildDrawer Drawer
                | ChildNode Node
                | ChildBabel Babel
@@ -58,30 +71,42 @@ data NodeChild = ChildText String
                  deriving (Eq)
 
 instance Show NodeChild where
-  show (ChildText s) = s
+  show (ChildText s) = show s
   show (ChildDrawer d) = show d
   show (ChildNode n) = show n
-  show (ChildBabel (Babel b)) = intercalate "\n" b
-  show (ChildTable (Table t)) = intercalate "\n" t
+  show (ChildBabel (Babel b)) = intercalate "\n" $ map show b
+  show (ChildTable (Table t)) = intercalate "\n" $ map show t
+
+instance TextLineSource NodeChild where
+  getTextLines (ChildText l) = [l]
+  getTextLines (ChildDrawer d) = drLines d
+  getTextLines (ChildNode n) = getTextLines n
+  getTextLines (ChildBabel (Babel lines)) = lines
+  getTextLines (ChildTable (Table lines)) = lines
 
 data Node = Node
             { nDepth :: Int
-            , nPrefixes :: [Prefix]
+            , nPrefix :: Maybe Prefix
             , nTags :: [String]
             , nChildren :: [NodeChild]
             , nTopic :: String
+            , nLine :: TextLine
             } deriving (Eq)
 
 instance Show Node where
-  show (Node depth prefixes tags children topic) =
+  show (Node depth prefix tags children topic _) =
     stars ++ " <" ++ pfx ++ "> " ++ topic ++ "<<" ++ tgs ++ ">>\n" ++ rest
     where
       stars = take depth $ repeat '*'
-      pfx = concatMap show prefixes
+      pfx = show prefix
       tgs = if length tags > 0
             then ":" ++ (intercalate ":" tags) ++ ":"
             else ""
       rest = intercalate "\n" $ map show children
+
+instance TextLineSource Node where
+  getTextLines node =
+    (nLine node) : (concatMap getTextLines $ nChildren node)
 
 data OrgFile = OrgFile { orgTitle :: String,
                          orgProps :: [(String, String)],
@@ -92,14 +117,6 @@ data OrgFileProperty = OrgFileProperty { fpName :: String,
 data OrgFileElement = OrgTopProperty OrgFileProperty
                     | OrgTopLevel { tlNode :: Node }
                     deriving (Eq, Show)
-
--- | Raw data about each line of text.
-data TextLine = TextLine
-                { tlIndent :: Int
-                , tlText :: String
-                , tlLineNum :: Int
-                } deriving (Eq, Show)
-
 
 -- | We have one of these per input line of the file.  Some of these
 -- we just keep as the input text, in the TextLine (as they need
@@ -185,18 +202,20 @@ orgPropDrawer = do manyTill space (char ':') <?> "Property Drawer"
                    props <- manyTill orgProperty (
                      try $ manyTill space (string ":END:"))
                    manyTill space newline
-                   return $ ChildDrawer $ Drawer drawerName props
+                   return $ ChildDrawer $ Drawer drawerName props []
 
 -- Any line that isn't a node.
 orgBodyLine :: Parsec String st NodeChild
 orgBodyLine = do firstChar <- satisfy (\a -> (a /= '*') && (a /= '#'))
                  if firstChar /= '\n'
                    then do rest <- manyTill anyChar newline
-                           return $ ChildText $ firstChar : rest
-                   else return $ ChildText ""
+                           let allText = (firstChar : rest)
+                               indent = length $ takeWhile (== ' ') allText
+                           return $ ChildText $ TextLine indent allText 0
+                   else return $ ChildText (TextLine 0 "" 0)
 
 -- (Depth, prefixes, tags, topic)
-orgNodeHead :: Parsec String st (Int, [Prefix], [String], String)
+orgNodeHead :: Parsec String st (Int, Maybe Prefix, [String], String)
 orgNodeHead = do let tagList = char ':' >> word `endBy1` char ':'
                        where word = many1 (letter <|> char '-' <|> digit <|> char '_')
 
@@ -217,18 +236,18 @@ orgNodeHead = do let tagList = char ':' >> word `endBy1` char ':'
                  let topic_words = words topic
                      first_word_is_prefix = length topic_words > 0 && (head topic_words `elem` validPrefixes)
                      prefix = if first_word_is_prefix
-                                then head topic_words
-                                else ""
+                                then Just $ Prefix $ head topic_words
+                                else Nothing
                      topic_remain = if first_word_is_prefix
-                                    then snd $ splitAt (length prefix) topic
+                                    then snd $ splitAt (length $ head topic_words) topic
                                     else topic
                  tags <- orgSuffix
-                 return (depth, [Prefix prefix], tags, strip topic_remain)
+                 return (depth, prefix, tags, strip topic_remain)
 
 orgNode = do (depth, prefixes, tags, topic) <- orgNodeHead
              body <- many ((try orgPropDrawer)
                            <|> orgBodyLine
-                           <|> (do {newline; return $ ChildText ""})
+                           <|> (do {newline; return $ ChildText (TextLine 0 "" 0)})
                            <?> "Node Body")
              return $ Node depth prefixes tags body topic
 
@@ -263,8 +282,8 @@ orgFile = do
   return $ OrgFile title (zip (map fpName props) (map fpValue props)) (
     map tlNode nodes)
 -}
-orgHead :: String -> Either ParseError Node
-orgHead s = parse orgNode "input" s
+--orgHead :: String -> Either ParseError Node
+--orgHead s = parse orgNode "input" s
 
 --parseOrgFile :: FilePath -> String -> IO (Either ParseError OrgFile)
 --parseOrgFile fname input = do
@@ -308,14 +327,14 @@ nodeLine = do
   let topic_words = words topic
       first_word_is_prefix = length topic_words > 0 && (head topic_words `elem` validPrefixes)
       prefix = if first_word_is_prefix
-                 then head topic_words
-                 else ""
+                 then Just $ Prefix $ head topic_words
+                 else Nothing
       topic_remain = if first_word_is_prefix
-                     then snd $ splitAt (length prefix) topic
+                     then snd $ splitAt (length $ head topic_words) topic
                      else topic
   tags <- orgSuffix
   loc <- getState
-  let line = OrgHeader loc $ Node depth [Prefix prefix] tags [] $ strip topic_remain
+  let line = OrgHeader loc $ Node depth prefix tags [] (strip topic_remain) loc
   return line
 
 propertyLine :: Parsec String TextLine OrgLine
@@ -329,10 +348,12 @@ propertyLine = do
 
 bodyLine :: Parsec String TextLine OrgLine
 bodyLine = do
-           text <- getState
-           return $ OrgText text
+  text <- getState
+  return $ OrgText text
 
 -- |The incoming state has TextLine within it.
+-- TODO(lally): update the state here to hold options we get in the
+-- ORG file, like TODO states.
 classifyOrgLine :: Parsec String TextLine OrgLine
 classifyOrgLine = do
   textLine <- getState
@@ -349,11 +370,17 @@ classifyOrgLine = do
           <|> bodyLine -- always matches.
   return res
 
-parseLine :: String -> IO (Either ParseError OrgLine)
-parseLine s = do
-  let line = TextLine 1 s 1
-      parse = runParser classifyOrgLine line "input" (s ++ "\n")
-  return parse
+
+parseLine :: Int -> String -> Either ParseError OrgLine
+parseLine lineno s = do
+  let indent = length $ takeWhile (== ' ') s
+      line = TextLine indent s lineno
+    in runParser classifyOrgLine line "input" (s ++ "\n")
+
+-- | Intentionally fail when we don't have a parse success, which
+-- shouldn't happen...
+allRight :: Either a b -> b
+allRight (Right b) = b
 
 getOrgIssue :: Node -> Maybe Issue
 getOrgIssue n =
@@ -371,8 +398,8 @@ getOrgIssue n =
                    in length matched > 0
       valOf k d = let matched = filter (\(kk,_) -> kk == k) $ drProperties d
                   in head $ map snd matched
-      mapStatus [] = Open
-      mapStatus ((Prefix s):ps) = case s of
+      mapStatus Nothing = Open
+      mapStatus (Just (Prefix s)) = case s of
         "ACTIVE" -> Active
         "CLOSED" -> Closed
         "DONE" -> Closed
@@ -381,7 +408,7 @@ getOrgIssue n =
         _ -> Open
   in if (hasPropDrawer n && hasOrigin && hasNum && hasUser)
      then Just $ Issue (valOf "ISSUEORIGIN" draw) (read $ valOf "ISSUENUM" draw) (
-       valOf "ISSUEUSER" draw) (mapStatus $ nPrefixes n) (nTags n) (nTopic n)
+       valOf "ISSUEUSER" draw) (mapStatus $ nPrefix n) (nTags n) (nTopic n)
      else Nothing
 
 getOrgIssues :: FilePath -> String -> IO [Issue]
