@@ -1,7 +1,7 @@
 module Sync.Retrieve.OrgMode.OrgMode where
 import Sync.Issue.Issue
 
-import Text.ParserCombinators.Parsec
+import Text.Parsec
 import Control.Monad
 import Data.List
 import Data.Maybe (mapMaybe, fromJust)
@@ -16,7 +16,7 @@ import Debug.Trace (trace)
 
 {-
   Grammar:
-nn  OrgFile :: [Property] [Node]
+  OrgFile :: [Property] [Node]
   Property :: '#+' String ':' String
   Node :: '^[*]+ ' [Prefix]* String TagList? (\n Drawer|\n)
   Prefix :: TODO | DONE | A | B | C -- Really? letters?
@@ -43,17 +43,26 @@ instance Show Drawer where
     ++ concatMap (\(k,v) -> ":" ++ k ++ ": " ++ v ++ "\n") props
     ++ ":END:>>PP\n"
 
+-- |Just store the lines of the babel environment.
+data Babel = Babel [String] deriving (Eq, Show)
+
+data Table = Table [String] deriving (Eq, Show)
+
 -- |The body of a node has different parts.  We can put tables here,
 -- as well as Babel sections, later.
 data NodeChild = ChildText String
                | ChildDrawer Drawer
                | ChildNode Node
+               | ChildBabel Babel
+               | ChildTable Table
                  deriving (Eq)
 
 instance Show NodeChild where
   show (ChildText s) = s
   show (ChildDrawer d) = show d
   show (ChildNode n) = show n
+  show (ChildBabel (Babel b)) = intercalate "\n" b
+  show (ChildTable (Table t)) = intercalate "\n" t
 
 data Node = Node
             { nDepth :: Int
@@ -77,16 +86,80 @@ instance Show Node where
 data OrgFile = OrgFile { orgTitle :: String,
                          orgProps :: [(String, String)],
                          orgNodes :: [Node] } deriving (Eq, Show)
+data OrgFileProperty = OrgFileProperty { fpName :: String,
+                                        fpValue :: String } deriving (Eq, Show)
 
-data OrgFileElement = OrgFileProperty { fpName :: String,
-                                        fpValue :: String }
+data OrgFileElement = OrgTopProperty OrgFileProperty
                     | OrgTopLevel { tlNode :: Node }
                     deriving (Eq, Show)
 
+-- | Raw data about each line of text.
+data TextLine = TextLine
+                { tlIndent :: Int
+                , tlText :: String
+                , tlLineNum :: Int
+                } deriving (Eq, Show)
+
+
+-- | We have one of these per input line of the file.  Some of these
+-- we just keep as the input text, in the TextLine (as they need
+-- multi-line parsing to understand
+data OrgLine = OrgText TextLine
+             | OrgHeader TextLine Node
+             | OrgDrawer TextLine
+             | OrgPragma TextLine OrgFileProperty
+             | OrgBabel TextLine
+             | OrgTable TextLine
+             deriving (Eq, Show)
+
+-- ^ Backwards!
+data OrgElement = OrgElNode Node
+                | OrgElPragma OrgFileProperty
+                deriving (Eq, Show)
+
+data OrgDoc = OrgDoc
+              { odLines :: [OrgLine]
+              , odNodes :: [Node]
+              , odProperties :: [OrgFileProperty]
+              } deriving (Eq, Show)
+
+data OrgEnvironmentBuilder = OETable Table
+                           | OEBabel Babel
+                             deriving (Eq, Show)
+
+data OrgDocBuilder = ODBuilder
+                     { odbNodePath :: [(Int, Node)]
+                     , odEnvironment :: Maybe OrgEnvironmentBuilder
+                     } deriving (Eq, Show)
+
+{-
+  Parsing the file efficiently.  Let's keep it non-quadratic.
+  - Split it up into lines
+  - Identify each line, as part of one of the big structure types:
+     - node headers
+     - drawers
+     - file-level properties
+        - babel headers
+     - Lines who's type depend on context (e.g., babel entries or node
+       text)
+  - Then fold the lines over a builder function and a zipper of the
+    tree.
+-}
+
+orgFile file = do
+  fileContents <- readFile file
+  let fileLines = lines fileContents
+      parseLines s = s
+      revRawStructure = reverse $ map parseLines fileLines
+      -- ^ keep the structure reversed, so that the last element's at
+      -- the head of the list.
+--      finalStructure =
+  return ()
 
 rstrip xs = reverse $ lstrip $ reverse xs
 lstrip = dropWhile (== ' ')
 strip xs = lstrip $ rstrip xs
+
 
 {-
 Parsing orgNode
@@ -115,7 +188,7 @@ orgPropDrawer = do manyTill space (char ':') <?> "Property Drawer"
                    return $ ChildDrawer $ Drawer drawerName props
 
 -- Any line that isn't a node.
-orgBodyLine :: GenParser Char st NodeChild
+orgBodyLine :: Parsec String st NodeChild
 orgBodyLine = do firstChar <- satisfy (\a -> (a /= '*') && (a /= '#'))
                  if firstChar /= '\n'
                    then do rest <- manyTill anyChar newline
@@ -123,27 +196,34 @@ orgBodyLine = do firstChar <- satisfy (\a -> (a /= '*') && (a /= '#'))
                    else return $ ChildText ""
 
 -- (Depth, prefixes, tags, topic)
-orgNodeHead :: GenParser Char st (Int, [Prefix], [String], String)
+orgNodeHead :: Parsec String st (Int, [Prefix], [String], String)
 orgNodeHead = do let tagList = char ':' >> word `endBy1` char ':'
                        where word = many1 (letter <|> char '-' <|> digit <|> char '_')
 
-                     orgPrefix = do pfx <- string "TODO" <|> string "DONE" <|>
+{-                     orgPrefix = do pfx <- string "TODO" <|> string "DONE" <|>
                                            string "OPEN" <|> string "CLOSED" <|>
                                            string "ACTIVE"
-                                    return $ [Prefix pfx]
-
+                                    return $ [Prefix pfx] -}
+                     validPrefixes = ["TODO", "DONE", "OPEN", "CLOSED", "ACTIVE"]
                      orgSuffix = (do tags <- tagList
                                      char '\n'
                                      return tags) <|> (char '\n' >> return [])
                  stars <- many1 $ char '*'
                  let depth = length stars
                  many1 space
-                 pfx <- optionMaybe orgPrefix
-                 let prefixes = maybe [] id pfx
-                 many space
+                 -- stop this sillyness on the prefix. just pull the first word of the topic.
+                 -- TODO(lally): don't hard-code the list of prefixes.
                  topic <- manyTill anyChar (try $ lookAhead orgSuffix)
+                 let topic_words = words topic
+                     first_word_is_prefix = length topic_words > 0 && (head topic_words `elem` validPrefixes)
+                     prefix = if first_word_is_prefix
+                                then head topic_words
+                                else ""
+                     topic_remain = if first_word_is_prefix
+                                    then snd $ splitAt (length prefix) topic
+                                    else topic
                  tags <- orgSuffix
-                 return (depth, prefixes, tags, strip topic)
+                 return (depth, [Prefix prefix], tags, strip topic_remain)
 
 orgNode = do (depth, prefixes, tags, topic) <- orgNodeHead
              body <- many ((try orgPropDrawer)
@@ -152,18 +232,19 @@ orgNode = do (depth, prefixes, tags, topic) <- orgNodeHead
                            <?> "Node Body")
              return $ Node depth prefixes tags body topic
 
+orgProperty :: Parsec String st OrgFileElement
 orgProperty = do string "#+"
                  name <- many1 letter
                  char ':'
                  many space
                  value <- manyTill anyChar (try newline)
-                 return $ OrgFileProperty name value
+                 return $ OrgTopProperty $ OrgFileProperty name value
 
-orgFileElement :: GenParser Char st OrgFileElement
-orgFileElement = do orgProperty <|> (do node <- orgNode
-                                        return $ OrgTopLevel node) <?> "file element"
-
-orgFile :: GenParser Char st OrgFile
+--orgFileElement :: Parsec String st OrgFileElement
+-- orgFileElement = do orgProperty <|> (do node <- orgNode
+--                                        return $ OrgTopLevel node) <?> "file element"
+{-
+orgFile :: Parsec String st OrgFile
 orgFile = do
   many orgBodyLine
   elements <- many orgFileElement
@@ -181,13 +262,98 @@ orgFile = do
       nodeProp _ = False
   return $ OrgFile title (zip (map fpName props) (map fpValue props)) (
     map tlNode nodes)
-
+-}
 orgHead :: String -> Either ParseError Node
 orgHead s = parse orgNode "input" s
 
-parseOrgFile :: FilePath -> String -> IO (Either ParseError OrgFile)
-parseOrgFile fname input = do
-  return $ parse orgFile fname input
+--parseOrgFile :: FilePath -> String -> IO (Either ParseError OrgFile)
+--parseOrgFile fname input = do
+--  return $ parse orgFile fname input
+
+babelLine :: Parsec String TextLine OrgLine
+babelLine = do
+  (string "#+begin_src:") <|> (string "#+end_src")
+  textLine <- getState
+  return $ OrgBabel textLine
+
+fileProperty :: Parsec String TextLine OrgLine
+fileProperty = do
+  string "#+"
+  name <- many1 letter
+  char ':'
+  many space
+  value <- manyTill anyChar (try newline)
+  line <- getState
+  return $ OrgPragma line $ OrgFileProperty name value
+
+nodeLine :: Parsec String TextLine OrgLine
+nodeLine = do
+  let tagList = char ':' >> word `endBy1` char ':'
+        where word = many1 (letter <|> char '-' <|> digit <|> char '_')
+{-      orgPrefix = do pfx <- string "TODO" <|> string "DONE" <|>
+                            string "OPEN" <|> string "CLOSED" <|>
+                            string "ACTIVE"
+                     return $ [Prefix pfx] -}
+      validPrefixes = ["TODO", "DONE", "OPEN", "CLOSED", "ACTIVE"]
+      orgSuffix = (do tags <- tagList
+                      char '\n'
+                      return tags) <|> (char '\n' >> return [])
+  stars <- many1 $ char '*'
+  let depth = length stars
+  many1 space
+  -- stop this sillyness on the prefix. just pull the first word of the topic.
+  -- TODO(lally): don't hard-code the list of prefixes.
+  many space
+  topic <- manyTill anyChar (try $ lookAhead orgSuffix)
+  let topic_words = words topic
+      first_word_is_prefix = length topic_words > 0 && (head topic_words `elem` validPrefixes)
+      prefix = if first_word_is_prefix
+                 then head topic_words
+                 else ""
+      topic_remain = if first_word_is_prefix
+                     then snd $ splitAt (length prefix) topic
+                     else topic
+  tags <- orgSuffix
+  loc <- getState
+  let line = OrgHeader loc $ Node depth [Prefix prefix] tags [] $ strip topic_remain
+  return line
+
+propertyLine :: Parsec String TextLine OrgLine
+propertyLine = do
+  manyTill space (char ':')
+  propName <- many1 letter
+  char ':'
+  remain <- manyTill (satisfy (/= '\n')) (try newline)
+  line <- getState
+  return $ OrgDrawer line
+
+bodyLine :: Parsec String TextLine OrgLine
+bodyLine = do
+           text <- getState
+           return $ OrgText text
+
+-- |The incoming state has TextLine within it.
+classifyOrgLine :: Parsec String TextLine OrgLine
+classifyOrgLine = do
+  textLine <- getState
+  -- Possibilities:
+  --   - #+begin_src:
+  --   - #+other:
+  --   - ** blah
+  --   - :PROPERTY:
+  --   - anything else.
+  res <- (try babelLine)
+          <|> (try fileProperty)
+          <|> (try nodeLine)
+          <|> (try propertyLine)
+          <|> bodyLine -- always matches.
+  return res
+
+parseLine :: String -> IO (Either ParseError OrgLine)
+parseLine s = do
+  let line = TextLine 1 s 1
+      parse = runParser classifyOrgLine line "input" (s ++ "\n")
+  return parse
 
 getOrgIssue :: Node -> Maybe Issue
 getOrgIssue n =
@@ -219,13 +385,14 @@ getOrgIssue n =
      else Nothing
 
 getOrgIssues :: FilePath -> String -> IO [Issue]
-getOrgIssues fname text = do
+getOrgIssues = undefined
+{- getOrgIssues fname text = do
   res <- parseOrgFile fname text
   case res of
     Left e -> do putStrLn $ show e
                  return []
     Right orgFile -> return $ mapMaybe getOrgIssue $ orgNodes orgFile 
-
+-}
 data IssueChanges = IssueChanges
                     { newIssues :: [Issue]
                     , changes :: [(String, Int, [IssueDelta])]
@@ -244,3 +411,4 @@ getIssueDeltas prior cur =
            else Nothing
       zipLookup vals k = (k, fromJust $ lookup k vals)
   in IssueChanges new  $ mapMaybe genDelta $ map (zipLookup curs) sames
+ 
