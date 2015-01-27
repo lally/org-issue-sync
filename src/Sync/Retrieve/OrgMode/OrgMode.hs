@@ -4,8 +4,9 @@ import Sync.Issue.Issue
 import Text.Parsec
 import Control.Monad
 import Data.List
-import Data.Maybe (mapMaybe, fromJust)
+import Data.Maybe (mapMaybe, fromJust, catMaybes)
 import Debug.Trace (trace)
+import Text.Regex.Posix
 -- | I don't think that the parser will do everything I want But I can
 -- get pretty close.  Basically, try and parse docs as lists of
 -- headings.  Will that work?  Only one way to find out.  Really
@@ -13,6 +14,11 @@ import Debug.Trace (trace)
 -- its date parsing?
 
 -- Fuckit, I'm writing a parser.
+
+trim xs =
+  let rstrip xs = reverse $ lstrip $ reverse xs
+      lstrip = dropWhile (== ' ')
+  in lstrip $ rstrip xs
 
 {-
   Grammar:
@@ -27,7 +33,9 @@ import Debug.Trace (trace)
   We'll keep a track of indentation as we go.  It will be used to
 remove leading whitespace, but that's it.
 -}
--- | Raw data about each line of text.
+
+-- | Raw data about each line of text.  Currently a bit hacked, with
+-- 'tlLineNum == 0' indicating a fake line.
 data TextLine = TextLine
                 { tlIndent :: Int  -- how long of a whitespace prefix is in tlText?
                 , tlText :: String
@@ -37,6 +45,9 @@ data TextLine = TextLine
 instance Show TextLine where
   show tl = (show $tlLineNum tl) ++ ":" ++ (tlText tl)
 
+-- | Currently a simple getter.  TODO(lally): extend with enough here
+-- to let us write out a modified .org file, preserving as much of the
+-- original input document structure as we can.
 class TextLineSource s where
   getTextLines :: s -> [TextLine]
 
@@ -89,6 +100,7 @@ data Node = Node
             , nPrefix :: Maybe Prefix
             , nTags :: [String]
             , nChildren :: [NodeChild]
+              -- ^ In reverse order during construction.
             , nTopic :: String
             , nLine :: TextLine
             } deriving (Eq)
@@ -120,7 +132,7 @@ data OrgFileElement = OrgTopProperty OrgFileProperty
 
 -- | We have one of these per input line of the file.  Some of these
 -- we just keep as the input text, in the TextLine (as they need
--- multi-line parsing to understand
+-- multi-line parsing to understand).
 data OrgLine = OrgText TextLine
              | OrgHeader TextLine Node
              | OrgDrawer TextLine
@@ -140,15 +152,119 @@ data OrgDoc = OrgDoc
               , odProperties :: [OrgFileProperty]
               } deriving (Eq, Show)
 
-data OrgEnvironmentBuilder = OETable Table
-                           | OEBabel Babel
-                             deriving (Eq, Show)
-
-data OrgDocBuilder = ODBuilder
-                     { odbNodePath :: [(Int, Node)]
-                     , odEnvironment :: Maybe OrgEnvironmentBuilder
+-- | The document is a forest of Nodes, with properties.  The Node
+-- Path is the currently-constructing tree of nodes.  The path is
+-- sorted by 'nDepth', in descending order, with each element's parent
+-- after it in the list.
+data OrgDocZipper = OrgDocZipper
+                     { ozbNodePath :: [Node]
+                     , ozbNodes :: [Node]
+                     , ozbProperties :: [OrgFileProperty]
                      } deriving (Eq, Show)
 
+-- | Closes up the path for the zipper, up to the specified depth.
+appendChildrenUpPathToDepth :: Int -> [Node] -> [Node]
+appendChildrenUpPathToDepth depth [n] = [n { nChildren = reverse $ nChildren n }]
+appendChildrenUpPathToDepth depth (n:ns)
+  | nDepth n > depth =
+    let parent = head ns
+        parentChildren = nChildren parent
+        fixedUpChild = n { nChildren = reverse $ nChildren n }
+        updatedParent = parent { nChildren = (ChildNode n):parentChildren }
+    in updatedParent : (tail ns)
+  | otherwise = (n:ns)
+
+-- | Closes up the path for the zipper, reversing the child-lists as we
+-- go (to get them into first->last order).
+closeZipPath doczip@(OrgDocZipper path nodes properties) =
+  doczip { ozbNodePath = [],
+           ozbNodes = nodes ++ (appendChildrenUpPathToDepth (-1) path) }
+
+
+addOrgLine :: OrgDocZipper -> OrgLine -> OrgDocZipper
+-- First, the simple base case.  Creates a pseudo-root for unattached
+-- lines, and inserts the first node into the path.  There can only be
+-- one pseudo-root, for lines before the first Node.
+addOrgLine doczip@(OrgDocZipper []  nodes properties) orgline =
+  let pseudo_root = Node (-1) Nothing [] [] "" emptyTextLine
+      pseudRootWithChild c = doczip { ozbNodePath = [pseudo_root { nChildren = [c] }] }
+  in case orgline of
+    (OrgText line) -> pseudRootWithChild $ ChildText line
+    (OrgHeader line node) -> doczip { ozbNodePath = [node] }
+    (OrgDrawer line) -> pseudRootWithChild $ ChildDrawer $ Drawer "" [] [line]
+    (OrgPragma line prop) -> doczip { ozbProperties = (ozbProperties doczip) ++ [prop] }
+    (OrgBabel line) -> pseudRootWithChild $ ChildBabel $ Babel [line]
+    (OrgTable line) ->  pseudRootWithChild $ ChildTable $ Table [line]
+
+addOrgLine doczip@(OrgDocZipper path@(pn:pns) nodes props) orgline =
+  let -- TODO(lally): addDrawer should parse as it goes.  But, we have the
+      -- problem of :END: followed with more properties.  We can detect this,
+      -- expensively, by scanning for :END: in the last line of the existing
+      -- drawer.  Correctness over speed!
+      isEndLine line = ":END:" == (trim $ tlText line)
+      openDrawer (Just (ChildDrawer (Drawer _ _ []))) = True
+      openDrawer (Just (ChildDrawer (Drawer _ _ lines))) =
+        not $ isEndLine $ last lines
+      openDrawer _ = False
+      parseDrawerName tline =
+        let matches = (tlText tline) =~ " *:([A-Za-z]*): *" :: [[String]]
+        in if length matches > 0
+           then matches !! 0 !! 1
+           else ""
+      parseDrawerProperty tline =
+        let matches = (tlText tline) =~ " *:([A-Za-z_-]*):(.*)" :: [[String]]
+        in if length matches > 0
+           then [(matches !! 0 !! 1, trim $ matches !! 0 !! 2)]
+           else []
+
+      addChildToNode n c = n { nChildren = c:(nChildren n) }
+      addChildToLastNode c = doczip { ozbNodePath = (addChildToNode pn c):pns }
+      updateLastChildOfLastNode c =
+        let updatedPn = pn { nChildren = c:(tail $ nChildren pn) }
+        in doczip { ozbNodePath = updatedPn:pns }
+      lastChild = let children = nChildren pn
+                  in if null children then Nothing else Just $ last children
+      addBabel line = case lastChild of
+        Just (ChildBabel (Babel lines)) ->
+          updateLastChildOfLastNode $ ChildBabel $ Babel $ lines ++ [line]
+        Nothing -> addChildToLastNode (ChildBabel $ Babel [line])
+
+      addTable line = case lastChild of
+        Just (ChildTable (Table lines)) ->
+          updateLastChildOfLastNode $ ChildTable $ Table $ lines ++ [line]
+        Nothing -> addChildToLastNode (ChildTable $ Table [line])
+
+      addDrawer line
+        | not (openDrawer lastChild) =
+          let drawer = Drawer (parseDrawerName line) [] [line]
+          in addChildToLastNode (ChildDrawer drawer)
+          -- Parse to get drProperties, and ignore :END:.
+        | otherwise =
+          let Just (ChildDrawer (Drawer n p lines)) = lastChild
+              props = parseDrawerProperty line
+              dlines = lines ++ [line]
+              update n p =
+                updateLastChildOfLastNode $ ChildDrawer $ Drawer n p dlines
+          in if isEndLine line
+             then update n p
+             else update n (p ++ props)
+
+      addNode line node
+        | nDepth node > nDepth pn = doczip { ozbNodePath = node:path }
+        | nDepth node <= nDepth (last path) =
+          let closed = closeZipPath doczip
+          in closed { ozbNodePath = [node] }
+        | otherwise =
+            let newpath = node:(appendChildrenUpPathToDepth (nDepth node) path)
+            in doczip { ozbNodePath = newpath}
+  in case orgline of
+    (OrgText line) -> addChildToLastNode $ ChildText line
+    (OrgHeader line node) -> addNode line node
+    (OrgDrawer line) -> addDrawer line
+    (OrgPragma line prop) ->
+      doczip { ozbProperties = (ozbProperties doczip) ++ [prop] }
+    (OrgBabel line) -> addBabel line
+    (OrgTable line) -> addTable line
 {-
   Parsing the file efficiently.  Let's keep it non-quadratic.
   - Split it up into lines
@@ -162,16 +278,17 @@ data OrgDocBuilder = ODBuilder
   - Then fold the lines over a builder function and a zipper of the
     tree.
 -}
-
-orgFile file = do
-  fileContents <- readFile file
+orgFile :: String -> IO OrgDoc
+orgFile fileContents = do
   let fileLines = lines fileContents
-      parseLines s = s
-      revRawStructure = reverse $ map parseLines fileLines
+      categorizedLines = 
+        map (\(nr, line) -> allRight $ parseLine nr line) $ zip [1..] fileLines
       -- ^ keep the structure reversed, so that the last element's at
-      -- the head of the list.
---      finalStructure =
-  return ()
+      emptyzip = OrgDocZipper [] [] []
+      (OrgDocZipper path nodes props) =
+        foldl addOrgLine emptyzip categorizedLines
+      all_nodes = nodes ++ appendChildrenUpPathToDepth (-1) path
+  return $ OrgDoc categorizedLines all_nodes props
 
 rstrip xs = reverse $ lstrip $ reverse xs
 lstrip = dropWhile (== ' ')
@@ -204,6 +321,8 @@ orgPropDrawer = do manyTill space (char ':') <?> "Property Drawer"
                    manyTill space newline
                    return $ ChildDrawer $ Drawer drawerName props []
 
+emptyTextLine = TextLine 0 "" 0
+
 -- Any line that isn't a node.
 orgBodyLine :: Parsec String st NodeChild
 orgBodyLine = do firstChar <- satisfy (\a -> (a /= '*') && (a /= '#'))
@@ -212,7 +331,7 @@ orgBodyLine = do firstChar <- satisfy (\a -> (a /= '*') && (a /= '#'))
                            let allText = (firstChar : rest)
                                indent = length $ takeWhile (== ' ') allText
                            return $ ChildText $ TextLine indent allText 0
-                   else return $ ChildText (TextLine 0 "" 0)
+                   else return $ ChildText emptyTextLine
 
 -- (Depth, prefixes, tags, topic)
 orgNodeHead :: Parsec String st (Int, Maybe Prefix, [String], String)
@@ -247,7 +366,7 @@ orgNodeHead = do let tagList = char ':' >> word `endBy1` char ':'
 orgNode = do (depth, prefixes, tags, topic) <- orgNodeHead
              body <- many ((try orgPropDrawer)
                            <|> orgBodyLine
-                           <|> (do {newline; return $ ChildText (TextLine 0 "" 0)})
+                           <|> (do {newline; return $ ChildText emptyTextLine})
                            <?> "Node Body")
              return $ Node depth prefixes tags body topic
 
@@ -388,6 +507,7 @@ getOrgIssue n =
       hasOrigin = hasKey "ISSUEORIGIN" draw
       hasNum = hasKey "ISSUENUM" draw
       hasUser = hasKey "ISSUEUSER" draw
+      hasType = hasKey "ISSUETYPE" draw
       drawerOf (ChildDrawer d) = Just d
       drawerOf _ = Nothing
       drawersOf nd = mapMaybe drawerOf $ nChildren nd
@@ -406,13 +526,35 @@ getOrgIssue n =
         "TODO" -> Open
         "OPEN" -> Open
         _ -> Open
-  in if (hasPropDrawer n && hasOrigin && hasNum && hasUser)
+  in if (hasPropDrawer n && hasOrigin && hasNum && hasUser && hasType)
      then Just $ Issue (valOf "ISSUEORIGIN" draw) (read $ valOf "ISSUENUM" draw) (
-       valOf "ISSUEUSER" draw) (mapStatus $ nPrefix n) (nTags n) (nTopic n)
+       valOf "ISSUEUSER" draw) (mapStatus $ nPrefix n) (nTags n) (nTopic n) (
+       valOf "ISSUETYPE" draw)
      else Nothing
 
-getOrgIssues :: FilePath -> String -> IO [Issue]
-getOrgIssues = undefined
+
+childNode :: NodeChild -> Maybe Node
+childNode (ChildNode n) = Just n
+childNode _ = Nothing
+childNodes :: Node -> [Node]
+childNodes n = mapMaybe childNode $ nChildren n
+scanNode :: (Node -> b) -> Node -> [b]
+scanNode fn n = let hd = fn n
+                    rest = (concatMap (scanNode fn) $ childNodes n) 
+                in (hd:rest)
+-- | Apply fn to every node in forest, and return a list of results from a
+-- traversal.
+scanOrgForest :: (Node -> a) -> [Node] -> [a]
+scanOrgForest fn forest =
+  concatMap (scanNode fn) forest
+
+getOrgIssues :: String -> IO [Issue]
+getOrgIssues contents = do
+  doc <- orgFile contents
+  let forest = odNodes doc
+      orgIssues = catMaybes $ scanOrgForest getOrgIssue forest
+  return orgIssues
+
 {- getOrgIssues fname text = do
   res <- parseOrgFile fname text
   case res of
@@ -423,7 +565,17 @@ getOrgIssues = undefined
 data IssueChanges = IssueChanges
                     { newIssues :: [Issue]
                     , changes :: [(String, Int, [IssueDelta])]
-                    } deriving (Eq, Show)
+                    } deriving (Eq)
+
+instance Show IssueChanges where
+  show (IssueChanges new changed) =
+    let summary iss = origin iss ++ "#" ++ (show $ number iss)
+        showChg (a, b, _) = a ++ "#" ++ (show b)
+        firstHeader = (show $ length new) ++ " new issues: \n   "
+        firstBody = intercalate "\n   " $ map summary new
+        secondHeader = "\nAnd " ++ (show $ length changed) ++ " issues changed: \n   "
+        secondBody = intercalate "\n   " $ map showChg changed
+    in  firstHeader ++ firstBody ++ secondHeader ++ secondBody
 
 getIssueDeltas :: [Issue] -> [Issue] -> IssueChanges
 getIssueDeltas prior cur =

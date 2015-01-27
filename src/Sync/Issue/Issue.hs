@@ -9,10 +9,14 @@ data Issue = Issue
              , status :: IssueStatus
              , tags :: [String]
              , summary :: String
+             , iType :: String
              } deriving (Show)
 
+issueEqual l r =
+  (origin l == origin r) && (number l == number r) && (iType l == iType r)
+
 instance Eq Issue where
-  (==) l r = (origin l == origin r) && (number l == number r)
+  (==) l r = issueEqual l r
 
 data IssueDelta = IssueDelta { idProperty :: String
                              , idOldValue :: String

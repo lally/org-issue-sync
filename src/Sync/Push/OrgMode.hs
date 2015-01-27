@@ -5,6 +5,16 @@ import Text.StringTemplate
 import Data.Char (toUpper)
 import Data.List (intercalate)
 
+-- https://github.com/freedomjs/freedom-pgp-e2e/issues/6#issuecomment-69795153
+-- https://code.google.com/p/webrtc/issues/detail?id=3592
+makeIssueUrl :: Issue -> String
+makeIssueUrl issue =
+  let num = show $ number issue
+      org = origin issue
+  in if '/' `elem` org
+     then "https://www.github.com/" ++ org ++ "/issues/" ++ num
+     else "https://code.google.com/p/" ++ org ++ "/issues/detail?id=" ++ num
+
 -- Dumb v0.1: just splat issues at the end of files.
 makeIssueOrgHeading :: Int -> Issue -> String
 makeIssueOrgHeading depth issue =
@@ -14,7 +24,9 @@ makeIssueOrgHeading depth issue =
         "$indent$ :ISSUENUM: $num$",
         "$indent$ :ISSUEORIGIN: $origin$",
         "$indent$ :ISSUEUSER: $user$",
-        "$indent$ :END:\n"]
+        "$indent$ :ISSUETYPE: $type$",
+        "$indent$ :END:\n",
+        "$indent$ - [[$url$][Issue Link]]\n"]
       attribs = [("prefix", take depth $ repeat '*'),
                  ("indent", take depth $ repeat ' '),
                  ("TODO", map toUpper $ show $ status issue),
@@ -23,7 +35,9 @@ makeIssueOrgHeading depth issue =
                  ("tags", if length (tags issue) > 0
                           then ":" ++ (intercalate ":" $ tags issue) ++ ":"
                           else ""),
+                 ("type", iType issue),
                  ("origin", origin issue),
+                 ("url", makeIssueUrl issue),
                  ("user", user issue)]
       template = newSTMP templateStr
       filledTempl = setManyAttrib attribs template
