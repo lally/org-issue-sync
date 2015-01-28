@@ -1,0 +1,24 @@
+scan_files = ["/home/lally/org/*.org"]
+output_file = "./test.org"
+github {
+  projects {
+     uproxy {
+          uproxy {
+            tags = ["T:Completed"]
+          }
+     }
+     freedomjs {
+          freedom-for-chrome {
+            tags = []
+          }
+     }
+  }
+}
+
+google-code {
+  projects {
+    webrtc {
+      terms = [["sctp", "usrsctp"], ["datachannel"]]
+    }
+  }
+}
