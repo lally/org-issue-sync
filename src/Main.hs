@@ -132,13 +132,15 @@ data CommandOptions = Options
                       , optCommandFile :: String
                       , optWriteOutput :: Bool
                       , optFetchIssues :: Bool
+                      , optScanOutput :: Bool
                       } deriving (Eq, Show)
 
 defaultOptions = Options
   { optPrintConfig = False
   , optCommandFile = "./org-issue-sync.conf"
   , optWriteOutput = True
-  , optFetchIssues = True }
+  , optFetchIssues = True
+  , optScanOutput = True }
 
 data RunConfiguration = RunConfiguration
                         { rcScanFiles :: [FilePath]
@@ -229,6 +231,9 @@ options =
     , Option ['f']     ["nofetch"]
         (NoArg (\ opts -> opts {optFetchIssues = False }))
         "Do not fetch issues."
+    , Option ['s']     ["scaninput"]
+        (NoArg (\ opts -> opts {optScanOutput = True }))
+        "Always scan the output file for issues."
     , Option ['w']     ["nowrite"]
         (NoArg (\ opts -> opts {optWriteOutput = False }))
         "Do not write new issues to output file."
@@ -236,9 +241,6 @@ options =
 
 main :: IO ()
 main = do
-  let filename = "/home/lally/Work/org-issue-sync/test.org"
-      auth = "REPLACE_ME_WITH_AN_ACCESS_TOKEN"
-      config_file = "/home/lally/Work/org-issue-sync/org-issue-sync.conf"
   argv <- getArgs
   case getOpt Permute options argv of
     (_,_,errs@(e:es)) -> ioError (userError (concat errs ++ usageInfo "Org Issue Sync" options))
@@ -254,7 +256,10 @@ main = do
                    res <- exitFailure
                    exitWith res
            else return ()
-         let (Just runconfig) = config
+         let (Just prerunconfig) = config
+         let runconfig = if optScanOutput opts
+                         then prerunconfig { rcScanFiles = (rcOutputFile prerunconfig):(rcScanFiles prerunconfig) }
+                         else prerunconfig
          if optPrintConfig opts
            then describeConfiguration runconfig
            else return ()
