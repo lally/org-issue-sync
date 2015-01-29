@@ -63,11 +63,10 @@ executable org-issue-sync
 
   -- Other library packages from which modules are imported.
   build-depends:       base >=4.7 && <4.8, network >= 2.0, HTTP >= 4000,
-                       network-uri >= 2.6, cassava >= 0.4.2.0,
-                       bytestring >= 0.10, vector >= 0.10, split >= 0.2.2,
-                       containers >= 0.5, HStringTemplate >= 0.7.3, parsec,
-                       github, configurator, unordered-containers, text,
-                       regex-posix, exceptions, Glob
+                       cassava >= 0.4.2.0, bytestring >= 0.10, vector >= 0.10,
+                       split >= 0.2.2, containers >= 0.5,
+                       HStringTemplate >= 0.7.3, parsec, github, configurator,
+                       unordered-containers, text, regex-posix, exceptions, Glob
 
   -- Directories containing source files.
   hs-source-dirs:      src
