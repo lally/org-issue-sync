@@ -7,7 +7,7 @@ import Data.ByteString.Lazy.Char8 (pack)
 import Data.List (intercalate)
 import Data.List.Split (splitOn)
 import qualified Data.Map as M
-import Sync.Issue.Issue
+import Sync.Issue
 import Network.HTTP
 import Network.URI (escapeURIString, isUnescapedInURI)
 

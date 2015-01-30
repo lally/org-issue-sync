@@ -1,5 +1,5 @@
 module Sync.Retrieve.GitHub.GitHub where
-import Sync.Issue.Issue
+import Sync.Issue
 import Data.Maybe
 import Data.Char
 import qualified Github.Auth as GA

@@ -1,38 +1,14 @@
-module Sync.Retrieve.OrgMode.OrgMode where
-import Sync.Issue.Issue
+module Sync.OrgMode where
+import Sync.Issue
 
-import Text.Parsec
 import Control.Monad
+import Data.Char (toUpper)
 import Data.List
 import Data.Maybe (mapMaybe, fromJust, catMaybes)
 import Debug.Trace (trace)
+import Text.Parsec
 import Text.Regex.Posix
--- | I don't think that the parser will do everything I want But I can
--- get pretty close.  Basically, try and parse docs as lists of
--- headings.  Will that work?  Only one way to find out.  Really
--- consider just writing my own.  This one's pretty shit.  Maybe reuse
--- its date parsing?
-
--- Fuckit, I'm writing a parser.
-
-trim xs =
-  let rstrip xs = reverse $ lstrip $ reverse xs
-      lstrip = dropWhile (== ' ')
-  in lstrip $ rstrip xs
-
-{-
-  Grammar:
-  OrgFile :: [Property] [Node]
-  Property :: '#+' String ':' String
-  Node :: '^[*]+ ' [Prefix]* String TagList? (\n Drawer|\n)
-  Prefix :: TODO | DONE | A | B | C -- Really? letters?
-  TagList :: String ':' TagList .
-  Drawer :: Indent ':' String ':'\n [DrawerProperty] \n Indent ':END:'\n
-  DrawerProperty :: Indent ':' String ':' [^\n]*\n
-
-  We'll keep a track of indentation as we go.  It will be used to
-remove leading whitespace, but that's it.
--}
+import Text.StringTemplate
 
 -- | Raw data about each line of text.  Currently a bit hacked, with
 -- 'tlLineNum == 0' indicating a fake line.
@@ -161,6 +137,57 @@ data OrgDocZipper = OrgDocZipper
                      , ozbNodes :: [Node]
                      , ozbProperties :: [OrgFileProperty]
                      } deriving (Eq, Show)
+
+
+
+-- https://github.com/freedomjs/freedom-pgp-e2e/issues/6#issuecomment-69795153
+-- https://code.google.com/p/webrtc/issues/detail?id=3592
+makeIssueUrl :: Issue -> String
+makeIssueUrl issue =
+  let num = show $ number issue
+      org = origin issue
+  in if '/' `elem` org
+     then "https://www.github.com/" ++ org ++ "/issues/" ++ num
+     else "https://code.google.com/p/" ++ org ++ "/issues/detail?id=" ++ num
+
+-- Dumb v0.1: just splat issues at the end of files.
+makeIssueOrgHeading :: Int -> Issue -> String
+makeIssueOrgHeading depth issue =
+  let templateStr = unlines [
+        "$prefix$ $TODO$ $summary$ $tags$",
+        "$indent$ :PROPERTIES:",
+        "$indent$ :ISSUENUM: $num$",
+        "$indent$ :ISSUEORIGIN: $origin$",
+        "$indent$ :ISSUEUSER: $user$",
+        "$indent$ :ISSUETYPE: $type$",
+        "$indent$ :END:\n",
+        "$indent$ - [[$url$][Issue Link]]\n"]
+      attribs = [("prefix", take depth $ repeat '*'),
+                 ("indent", take depth $ repeat ' '),
+                 ("TODO", map toUpper $ show $ status issue),
+                 ("num", show $ number issue),
+                 ("summary", summary issue),
+                 ("tags", if length (tags issue) > 0
+                          then ":" ++ (intercalate ":" $ tags issue) ++ ":"
+                          else ""),
+                 ("type", iType issue),
+                 ("origin", origin issue),
+                 ("url", makeIssueUrl issue),
+                 ("user", user issue)]
+      template = newSTMP templateStr
+      filledTempl = setManyAttrib attribs template
+  in toString filledTempl
+
+appendIssues :: FilePath -> [Issue] -> IO ()
+appendIssues file issues = do
+  let headings = intercalate "\n" $ map (makeIssueOrgHeading 2) issues
+  appendFile file headings
+
+
+trim xs =
+  let rstrip xs = reverse $ lstrip $ reverse xs
+      lstrip = dropWhile (== ' ')
+  in lstrip $ rstrip xs
 
 -- | Closes up the path for the zipper, up to the specified depth.
 appendChildrenUpPathToDepth :: Int -> [Node] -> [Node]
@@ -294,18 +321,6 @@ rstrip xs = reverse $ lstrip $ reverse xs
 lstrip = dropWhile (== ' ')
 strip xs = lstrip $ rstrip xs
 
-
-{-
-Parsing orgNode
-*** PREFIX String Taglist
-
-So, let's (try prefix) <|> (try taglist <|> not newline) >> newline
-
-Parts of this problem:
- - The sequencing, combind with optionality.
- - The result types
- -}
-
 orgPropDrawer = do manyTill space (char ':') <?> "Property Drawer"
                    drawerName <- many1 letter
                    char ':'
@@ -337,11 +352,6 @@ orgBodyLine = do firstChar <- satisfy (\a -> (a /= '*') && (a /= '#'))
 orgNodeHead :: Parsec String st (Int, Maybe Prefix, [String], String)
 orgNodeHead = do let tagList = char ':' >> word `endBy1` char ':'
                        where word = many1 (letter <|> char '-' <|> digit <|> char '_')
-
-{-                     orgPrefix = do pfx <- string "TODO" <|> string "DONE" <|>
-                                           string "OPEN" <|> string "CLOSED" <|>
-                                           string "ACTIVE"
-                                    return $ [Prefix pfx] -}
                      validPrefixes = ["TODO", "DONE", "OPEN", "CLOSED", "ACTIVE"]
                      orgSuffix = (do tags <- tagList
                                      char '\n'
@@ -378,36 +388,6 @@ orgProperty = do string "#+"
                  value <- manyTill anyChar (try newline)
                  return $ OrgTopProperty $ OrgFileProperty name value
 
---orgFileElement :: Parsec String st OrgFileElement
--- orgFileElement = do orgProperty <|> (do node <- orgNode
---                                        return $ OrgTopLevel node) <?> "file element"
-{-
-orgFile :: Parsec String st OrgFile
-orgFile = do
-  many orgBodyLine
-  elements <- many orgFileElement
-  let titles = filter titleProp elements
-      title = if length titles > 0
-                 then fpValue $ last titles
-                 else ""
-      props = filter (\x -> (not $ titleProp x) && (isProp x)) elements
-      nodes = filter nodeProp elements
-      isProp (OrgFileProperty _ _) = True
-      isProp (OrgTopLevel _) = False
-      titleProp (OrgFileProperty "TITLE" _) = True
-      titleProp _ = False
-      nodeProp (OrgTopLevel _) = True
-      nodeProp _ = False
-  return $ OrgFile title (zip (map fpName props) (map fpValue props)) (
-    map tlNode nodes)
--}
---orgHead :: String -> Either ParseError Node
---orgHead s = parse orgNode "input" s
-
---parseOrgFile :: FilePath -> String -> IO (Either ParseError OrgFile)
---parseOrgFile fname input = do
---  return $ parse orgFile fname input
-
 babelLine :: Parsec String TextLine OrgLine
 babelLine = do
   (string "#+begin_src:") <|> (string "#+end_src")
@@ -428,10 +408,6 @@ nodeLine :: Parsec String TextLine OrgLine
 nodeLine = do
   let tagList = char ':' >> word `endBy1` char ':'
         where word = many1 (letter <|> char '-' <|> digit <|> char '_')
-{-      orgPrefix = do pfx <- string "TODO" <|> string "DONE" <|>
-                            string "OPEN" <|> string "CLOSED" <|>
-                            string "ACTIVE"
-                     return $ [Prefix pfx] -}
       validPrefixes = ["TODO", "DONE", "OPEN", "CLOSED", "ACTIVE"]
       orgSuffix = (do tags <- tagList
                       char '\n'
@@ -489,7 +465,6 @@ classifyOrgLine = do
           <|> bodyLine -- always matches.
   return res
 
-
 parseLine :: Int -> String -> Either ParseError OrgLine
 parseLine lineno s = do
   let indent = length $ takeWhile (== ' ') s
@@ -540,8 +515,9 @@ childNodes :: Node -> [Node]
 childNodes n = mapMaybe childNode $ nChildren n
 scanNode :: (Node -> b) -> Node -> [b]
 scanNode fn n = let hd = fn n
-                    rest = (concatMap (scanNode fn) $ childNodes n) 
+                    rest = (concatMap (scanNode fn) $ childNodes n)
                 in (hd:rest)
+
 -- | Apply fn to every node in forest, and return a list of results from a
 -- traversal.
 scanOrgForest :: (Node -> a) -> [Node] -> [a]
@@ -555,13 +531,6 @@ getOrgIssues contents = do
       orgIssues = catMaybes $ scanOrgForest getOrgIssue forest
   return orgIssues
 
-{- getOrgIssues fname text = do
-  res <- parseOrgFile fname text
-  case res of
-    Left e -> do putStrLn $ show e
-                 return []
-    Right orgFile -> return $ mapMaybe getOrgIssue $ orgNodes orgFile 
--}
 data IssueChanges = IssueChanges
                     { newIssues :: [Issue]
                     , changes :: [(String, Int, [IssueDelta])]

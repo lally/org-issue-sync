@@ -1,4 +1,4 @@
-module Sync.Issue.Issue where
+module Sync.Issue where
 import Data.Maybe (mapMaybe)
 data IssueStatus = Open | Active | Closed deriving (Eq, Show)
 

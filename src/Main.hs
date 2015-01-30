@@ -11,9 +11,8 @@ import Control.Monad.Catch (catchIOError)
 import Data.List (nub, (\\))
 import Debug.Trace
 import Data.Maybe
-import Sync.Push.OrgMode
-import Sync.Retrieve.OrgMode.OrgMode
-import Sync.Issue.Issue
+import Sync.OrgMode
+import Sync.Issue
 import Data.List (intercalate)
 import System.Console.GetOpt
 import System.Environment (getArgs)
