@@ -9,7 +9,7 @@ import Data.List.Split (splitOn)
 import qualified Data.Map as M
 import Sync.Issue.Issue
 import Network.HTTP
-import Network.URI
+import Network.URI (escapeURIString, isUnescapedInURI)
 
 -- ID, Pri, Mstone, ReleaseBlock, Area, Status, Owner, Summary
 type CSVRow = (Int, Int, String, String, String, String, String, String, String)

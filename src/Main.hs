@@ -209,7 +209,7 @@ runConfiguration (RunConfiguration scan_files output github googlecode) fetch wr
   gc_issues <- if fetch
                then do mapM loadGCSource googlecode
                else return []
-  let new_issues = (concat (gh_issues ++ gc_issues)) \\ (concat existing_issues)
+  let new_issues = nub (concat $ nub (gh_issues ++ gc_issues)) \\ (nub $ concat existing_issues)
   putStrLn $ "Found " ++ (show $ length new_issues) ++ " new issues"
   if write
     then do appendIssues output new_issues
@@ -266,24 +266,3 @@ main = do
          runConfiguration runconfig (optFetchIssues opts) (optWriteOutput opts)
          res <- exitSuccess
          exitWith res
-{-
-  firstIssues <- GC.fetch "webrtc" ["lally@webrtc.org"]
-  otherIssues <- GH.fetch Nothing "uproxy" "uproxy" (Just Open) []
-  lastIssues <- GC.fetch "chromium" ["lally@chromium.org"]
-
-  let issues = firstIssues ++ otherIssues ++ lastIssues
-  putStrLn $ "============================================\n"
-  putStrLn $ "Fetched " ++ (show $ length issues) ++ " issues"
-  oldIssues <- catchIOError (loadOrgIssues filename) (\_ -> return [])
-  let deltas = getIssueDeltas oldIssues issues
-  putStrLn $ "============================================\n"
-  putStrLn $ (show $ length $ newIssues deltas) ++ " new issues, and " ++
-    (show $ length $ changes deltas) ++ " issues changed properties."
-  putStrLn $ "============================================\n"
-  putStrLn $ "Changed issues: \n" ++ (show $ changes deltas)
-  putStrLn $ "============================================\n"
-  putStrLn $ "Writing new issues to " ++ filename
-  putStrLn $ "============================================\n"
-  appendIssues filename (newIssues deltas)
-  return ()
--}
