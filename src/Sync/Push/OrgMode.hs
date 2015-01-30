@@ -2,7 +2,7 @@ module Sync.Push.OrgMode where
 
 import Sync.Issue.Issue
 import Text.StringTemplate
-import Data.Char (toUpper)
+import Data.Char (toUpper, isAlphaNum)
 import Data.List (intercalate)
 
 -- https://github.com/freedomjs/freedom-pgp-e2e/issues/6#issuecomment-69795153
@@ -18,7 +18,12 @@ makeIssueUrl issue =
 -- Dumb v0.1: just splat issues at the end of files.
 makeIssueOrgHeading :: Int -> Issue -> String
 makeIssueOrgHeading depth issue =
-  let templateStr = unlines [
+  let cleanChar c
+        | isAlphaNum c = c
+        | c == '-' = c
+        | otherwise = '_'
+      cleanTag tag = map cleanChar tag
+      templateStr = unlines [
         "$prefix$ $TODO$ $summary$ $tags$",
         "$indent$ :PROPERTIES:",
         "$indent$ :ISSUENUM: $num$",
@@ -33,7 +38,7 @@ makeIssueOrgHeading depth issue =
                  ("num", show $ number issue),
                  ("summary", summary issue),
                  ("tags", if length (tags issue) > 0
-                          then ":" ++ (intercalate ":" $ tags issue) ++ ":"
+                          then ":" ++ (intercalate ":" $ map cleanTag $ tags issue) ++ ":"
                           else ""),
                  ("type", iType issue),
                  ("origin", origin issue),

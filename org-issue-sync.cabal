@@ -50,6 +50,9 @@ build-type:          Simple
 -- Constraint on the version of Cabal needed to build this package.
 cabal-version:       >=1.10
 
+flag network-uri
+   description: Get Network.URI from the network-uri package
+   default: True
 
 executable org-issue-sync
   -- .hs or .lhs file containing the Main module.
@@ -62,11 +65,17 @@ executable org-issue-sync
   -- other-extensions:
 
   -- Other library packages from which modules are imported.
-  build-depends:       base >=4.7 && <4.8, network >= 2.0, HTTP >= 4000,
-                       cassava >= 0.4.2.0, bytestring >= 0.10, vector >= 0.10,
-                       split >= 0.2.2, containers >= 0.5, network-uri >= 2.6,
-                       HStringTemplate >= 0.7.3, parsec, github, configurator,
-                       unordered-containers, text, regex-posix, exceptions, Glob
+  build-depends:       base >=4.7 && <4.8, HTTP >= 4000, cassava >= 0.4.2.0,
+                       bytestring >= 0.10, vector >= 0.10, split >= 0.2.2,
+                       containers >= 0.5, HStringTemplate >= 0.7.3, parsec,
+                       github, configurator, unordered-containers, text,
+                       regex-posix, exceptions, Glob
+
+
+  if flag(network-uri)
+     build-depends: network-uri >= 2.6, network >= 2.6
+  else
+     build-depends: network-uri < 2.6, network < 2.6
 
   -- Directories containing source files.
   hs-source-dirs:      src
