@@ -209,8 +209,16 @@ runConfiguration (RunConfiguration scan_files output github googlecode) fetch wr
   gc_issues <- if fetch
                then do mapM loadGCSource googlecode
                else return []
-  let new_issues = nub (concat $ nub (gh_issues ++ gc_issues)) \\ (nub $ concat existing_issues)
+  let orig_issues = concat (gh_issues ++ gc_issues)
+      nub_orig_issues = nub orig_issues
+      dup_issues =  nub_orig_issues \\ orig_issues
+      new_issues = nub_orig_issues \\ (nub $ concat existing_issues)
+      idIssue iss = (iType iss) ++ ":" ++ (origin iss) ++ "/" ++ (show $ number iss)
   putStrLn $ "Found " ++ (show $ length new_issues) ++ " new issues"
+  if length dup_issues > 0
+  then do putStrLn $ "  Warning: " ++ length dup_issues ++ " issues in .org files are duplicate!\n\t"
+          putStrLn $ intercalate "\n\t" $ map idIssue dup_issues
+  else return ()
   if write
     then do appendIssues output new_issues
     else return ()
