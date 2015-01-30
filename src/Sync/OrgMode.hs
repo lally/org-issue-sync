@@ -1,4 +1,6 @@
 module Sync.OrgMode where
+-- TODO(lally): only export the interesting things!
+
 import Sync.Issue
 
 import Control.Monad
@@ -133,12 +135,33 @@ data OrgDoc = OrgDoc
 -- sorted by 'nDepth', in descending order, with each element's parent
 -- after it in the list.
 data OrgDocZipper = OrgDocZipper
-                     { ozbNodePath :: [Node]
-                     , ozbNodes :: [Node]
-                     , ozbProperties :: [OrgFileProperty]
+                     { ozNodePath :: [Node]
+                     , ozNodes :: [Node]
+                     , ozProperties :: [OrgFileProperty]
                      } deriving (Eq, Show)
 
+data OrgDocView a = OrgDocView
+                    { ovElements :: [(a, Node)]
+                    , ovDocument :: OrgDoc
+                    } deriving (Show)
 
+generateDocView :: (Node -> Maybe a) -> OrgDoc -> OrgDocView a
+generateDocView classifier doc =
+  let childNode (ChildNode n) = Just n
+      childNode _ = Nothing
+      childNodes n = mapMaybe childNode $ nChildren n
+      scanNode :: (Node -> Maybe a) -> Node -> [(a, Node)]
+      scanNode fn n = let hd = fn n
+                          entry = maybe [] (\a -> [(a,n)]) hd
+                          rest = (concatMap (scanNode fn) $ childNodes n)
+                      in (entry++rest)
+      scanOrgForest :: (Node -> Maybe a) -> [Node] -> [(a, Node)]
+      scanOrgForest fn forest =
+        concatMap (scanNode fn) forest
+
+      forest = odNodes doc
+      elements = scanOrgForest classifier forest
+  in OrgDocView elements doc
 
 -- https://github.com/freedomjs/freedom-pgp-e2e/issues/6#issuecomment-69795153
 -- https://code.google.com/p/webrtc/issues/detail?id=3592
@@ -204,8 +227,8 @@ appendChildrenUpPathToDepth depth (n:ns)
 -- | Closes up the path for the zipper, reversing the child-lists as we
 -- go (to get them into first->last order).
 closeZipPath doczip@(OrgDocZipper path nodes properties) =
-  doczip { ozbNodePath = [],
-           ozbNodes = nodes ++ (appendChildrenUpPathToDepth (-1) path) }
+  doczip { ozNodePath = [],
+           ozNodes = nodes ++ (appendChildrenUpPathToDepth (-1) path) }
 
 
 addOrgLine :: OrgDocZipper -> OrgLine -> OrgDocZipper
@@ -214,12 +237,12 @@ addOrgLine :: OrgDocZipper -> OrgLine -> OrgDocZipper
 -- one pseudo-root, for lines before the first Node.
 addOrgLine doczip@(OrgDocZipper []  nodes properties) orgline =
   let pseudo_root = Node (-1) Nothing [] [] "" emptyTextLine
-      pseudRootWithChild c = doczip { ozbNodePath = [pseudo_root { nChildren = [c] }] }
+      pseudRootWithChild c = doczip { ozNodePath = [pseudo_root { nChildren = [c] }] }
   in case orgline of
     (OrgText line) -> pseudRootWithChild $ ChildText line
-    (OrgHeader line node) -> doczip { ozbNodePath = [node] }
+    (OrgHeader line node) -> doczip { ozNodePath = [node] }
     (OrgDrawer line) -> pseudRootWithChild $ ChildDrawer $ Drawer "" [] [line]
-    (OrgPragma line prop) -> doczip { ozbProperties = (ozbProperties doczip) ++ [prop] }
+    (OrgPragma line prop) -> doczip { ozProperties = (ozProperties doczip) ++ [prop] }
     (OrgBabel line) -> pseudRootWithChild $ ChildBabel $ Babel [line]
     (OrgTable line) ->  pseudRootWithChild $ ChildTable $ Table [line]
 
@@ -245,10 +268,10 @@ addOrgLine doczip@(OrgDocZipper path@(pn:pns) nodes props) orgline =
            else []
 
       addChildToNode n c = n { nChildren = c:(nChildren n) }
-      addChildToLastNode c = doczip { ozbNodePath = (addChildToNode pn c):pns }
+      addChildToLastNode c = doczip { ozNodePath = (addChildToNode pn c):pns }
       updateLastChildOfLastNode c =
         let updatedPn = pn { nChildren = c:(tail $ nChildren pn) }
-        in doczip { ozbNodePath = updatedPn:pns }
+        in doczip { ozNodePath = updatedPn:pns }
       lastChild = let children = nChildren pn
                   in if null children then Nothing else Just $ last children
       addBabel line = case lastChild of
@@ -277,19 +300,19 @@ addOrgLine doczip@(OrgDocZipper path@(pn:pns) nodes props) orgline =
              else update n (p ++ props)
 
       addNode line node
-        | nDepth node > nDepth pn = doczip { ozbNodePath = node:path }
+        | nDepth node > nDepth pn = doczip { ozNodePath = node:path }
         | nDepth node <= nDepth (last path) =
           let closed = closeZipPath doczip
-          in closed { ozbNodePath = [node] }
+          in closed { ozNodePath = [node] }
         | otherwise =
             let newpath = node:(appendChildrenUpPathToDepth (nDepth node) path)
-            in doczip { ozbNodePath = newpath}
+            in doczip { ozNodePath = newpath}
   in case orgline of
     (OrgText line) -> addChildToLastNode $ ChildText line
     (OrgHeader line node) -> addNode line node
     (OrgDrawer line) -> addDrawer line
     (OrgPragma line prop) ->
-      doczip { ozbProperties = (ozbProperties doczip) ++ [prop] }
+      doczip { ozProperties = (ozProperties doczip) ++ [prop] }
     (OrgBabel line) -> addBabel line
     (OrgTable line) -> addTable line
 {-
@@ -321,6 +344,7 @@ rstrip xs = reverse $ lstrip $ reverse xs
 lstrip = dropWhile (== ' ')
 strip xs = lstrip $ rstrip xs
 
+orgPropDrawer :: Parsec String st NodeChild
 orgPropDrawer = do manyTill space (char ':') <?> "Property Drawer"
                    drawerName <- many1 letter
                    char ':'
@@ -348,38 +372,6 @@ orgBodyLine = do firstChar <- satisfy (\a -> (a /= '*') && (a /= '#'))
                            return $ ChildText $ TextLine indent allText 0
                    else return $ ChildText emptyTextLine
 
--- (Depth, prefixes, tags, topic)
-orgNodeHead :: Parsec String st (Int, Maybe Prefix, [String], String)
-orgNodeHead = do let tagList = char ':' >> word `endBy1` char ':'
-                       where word = many1 (letter <|> char '-' <|> digit <|> char '_')
-                     validPrefixes = ["TODO", "DONE", "OPEN", "CLOSED", "ACTIVE"]
-                     orgSuffix = (do tags <- tagList
-                                     char '\n'
-                                     return tags) <|> (char '\n' >> return [])
-                 stars <- many1 $ char '*'
-                 let depth = length stars
-                 many1 space
-                 -- stop this sillyness on the prefix. just pull the first word of the topic.
-                 -- TODO(lally): don't hard-code the list of prefixes.
-                 topic <- manyTill anyChar (try $ lookAhead orgSuffix)
-                 let topic_words = words topic
-                     first_word_is_prefix = length topic_words > 0 && (head topic_words `elem` validPrefixes)
-                     prefix = if first_word_is_prefix
-                                then Just $ Prefix $ head topic_words
-                                else Nothing
-                     topic_remain = if first_word_is_prefix
-                                    then snd $ splitAt (length $ head topic_words) topic
-                                    else topic
-                 tags <- orgSuffix
-                 return (depth, prefix, tags, strip topic_remain)
-
-orgNode = do (depth, prefixes, tags, topic) <- orgNodeHead
-             body <- many ((try orgPropDrawer)
-                           <|> orgBodyLine
-                           <|> (do {newline; return $ ChildText emptyTextLine})
-                           <?> "Node Body")
-             return $ Node depth prefixes tags body topic
-
 orgProperty :: Parsec String st OrgFileElement
 orgProperty = do string "#+"
                  name <- many1 letter
@@ -390,7 +382,7 @@ orgProperty = do string "#+"
 
 babelLine :: Parsec String TextLine OrgLine
 babelLine = do
-  (string "#+begin_src:") <|> (string "#+end_src")
+  (string "#+begin_src:") <|> (string "#+end_src") <|>  (string "#+BEGIN_SRC:") <|> (string "#+END_SRC")
   textLine <- getState
   return $ OrgBabel textLine
 
@@ -507,29 +499,10 @@ getOrgIssue n =
        valOf "ISSUETYPE" draw)
      else Nothing
 
-
-childNode :: NodeChild -> Maybe Node
-childNode (ChildNode n) = Just n
-childNode _ = Nothing
-childNodes :: Node -> [Node]
-childNodes n = mapMaybe childNode $ nChildren n
-scanNode :: (Node -> b) -> Node -> [b]
-scanNode fn n = let hd = fn n
-                    rest = (concatMap (scanNode fn) $ childNodes n)
-                in (hd:rest)
-
--- | Apply fn to every node in forest, and return a list of results from a
--- traversal.
-scanOrgForest :: (Node -> a) -> [Node] -> [a]
-scanOrgForest fn forest =
-  concatMap (scanNode fn) forest
-
 getOrgIssues :: String -> IO [Issue]
 getOrgIssues contents = do
   doc <- orgFile contents
-  let forest = odNodes doc
-      orgIssues = catMaybes $ scanOrgForest getOrgIssue forest
-  return orgIssues
+  return $ map fst $ ovElements $ generateDocView getOrgIssue doc
 
 data IssueChanges = IssueChanges
                     { newIssues :: [Issue]
