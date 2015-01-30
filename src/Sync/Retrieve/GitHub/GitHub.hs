@@ -26,7 +26,6 @@ convertIssue origin iss =
                     else Open
       cleanChar c
         | isAlphaNum c = c
-        | c == '-' = c
         | otherwise = '_'
       cleanTag tag = map cleanChar tag
       cleanTags = map cleanTag tags

@@ -20,7 +20,6 @@ makeIssueOrgHeading :: Int -> Issue -> String
 makeIssueOrgHeading depth issue =
   let cleanChar c
         | isAlphaNum c = c
-        | c == '-' = c
         | otherwise = '_'
       cleanTag tag = map cleanChar tag
       templateStr = unlines [

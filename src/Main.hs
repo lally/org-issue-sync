@@ -8,7 +8,7 @@ import qualified Data.HashMap.Strict as HM
 import Control.Applicative
 import Control.Monad (liftM2, liftM3, mplus, join)
 import Control.Monad.Catch (catchIOError)
-import Data.List (nub, (\\))
+import Data.List (nub, (\\), sort, intersect, groupBy)
 import Debug.Trace
 import Data.Maybe
 import Sync.Push.OrgMode
@@ -192,35 +192,72 @@ describeConfiguration (RunConfiguration scan_files output github googlecode) = d
     else return ()
   putStrLn $ "Will put new issues into " ++ output
 
-runConfiguration :: RunConfiguration -> Bool -> Bool -> IO ()
-runConfiguration (RunConfiguration scan_files output github googlecode) fetch write = do
+runConfiguration :: RunConfiguration -> Bool -> Bool -> Bool -> IO ()
+runConfiguration (RunConfiguration orig_scan_files output github googlecode) fetch write verbose = do
   -- Scan all the existing files.
-  existing_issues <- mapM loadOrgIssues scan_files
+  let scan_files = nub orig_scan_files
+  raw_existing_issues <- mapM loadOrgIssues scan_files
+  let existing_issue_filelist = zip scan_files raw_existing_issues
+      sorted_existing_issues = sort $ concat raw_existing_issues
+      existing_issues = nub sorted_existing_issues
+      dup_existing_issues = map (\issues -> (head issues, length issues)) $ filter (\n -> length n > 1) $ groupBy (==) sorted_existing_issues
+
   -- Load the issues from our sources
   let loadGHSource (GitHubSource user project tags) =
         GH.fetch Nothing user project (Just Open) tags
       loadGCSource (GoogleCodeSource repo terms) =
         GC.fetch repo terms
-  putStrLn $ "Loading from " ++ (show $ length github) ++ " GitHub queries..."
+  if verbose
+  then do putStrLn $ "Loading from " ++ (show $ length github) ++ " GitHub queries..."
+  else return ()
   gh_issues <- if fetch
                then do mapM loadGHSource github
                else return []
-  putStrLn $ "Loading from " ++ (show $ length googlecode) ++ " GoogleCode queries..."
+  if verbose
+  then do putStrLn $ "Loading from " ++ (show $ length googlecode) ++ " GoogleCode queries..."
+  else return ()
   gc_issues <- if fetch
                then do mapM loadGCSource googlecode
                else return []
-  let orig_issues = concat (gh_issues ++ gc_issues)
-      nub_orig_issues = nub orig_issues
-      dup_issues =  nub_orig_issues \\ orig_issues
-      new_issues = nub_orig_issues \\ (nub $ concat existing_issues)
-      idIssue iss = (iType iss) ++ ":" ++ (origin iss) ++ "/" ++ (show $ number iss)
-  putStrLn $ "Found " ++ (show $ length new_issues) ++ " new issues"
-  if length dup_issues > 0
-  then do putStrLn $ "  Warning: " ++ length dup_issues ++ " issues in .org files are duplicate!\n\t"
-          putStrLn $ intercalate "\n\t" $ map idIssue dup_issues
+  let found_issues = nub $ sort $ concat (gh_issues ++ gc_issues)
+      new_issues = found_issues \\ existing_issues
+
+  let idIssue iss = (iType iss) ++ ":" ++ (origin iss) ++ "# " ++ (show $ number iss)
+      categorize :: [Issue] -> [(String, [(String, [Issue])])]
+      categorize issues =
+        let byType = groupBy (\a b -> (iType a == iType b)) issues
+            byOrigin s = map (\s -> (origin $ head s, s)) $ groupBy  (\a b -> (origin a == origin b)) s
+        in map (\s -> (iType $ head s, byOrigin s)) byType
+      printIssues :: [(String, [(String, [Issue])])] -> String
+      printIssues issues =
+        let printSingleIssue s = show $ number s
+            printOriginList :: [(String, [Issue])] -> String
+            printOriginList elems =
+                let printOrigin (origin, iss) =
+                       origin ++ ": " ++ (intercalate " " $ map printSingleIssue iss)
+                in intercalate "\n\t" $ map printOrigin elems
+            printTypeList :: (String, [(String, [Issue])]) -> String
+            printTypeList (type_name, elems) =
+                type_name ++ ":\n\t" ++ (printOriginList elems) ++ "\n"
+        in intercalate "\n  " $ map printTypeList issues
+  if verbose
+  then do putStrLn $ "Found " ++ (show $ length new_issues) ++ " new issues"
+          if length dup_existing_issues > 0
+          then do putStr $ "Found " ++ (show $ length dup_existing_issues) ++ " duplicate issues:\n  "
+                  putStrLn $ intercalate "\n" $ map (\(iss, cnt) -> (show cnt) ++ ": " ++ idIssue iss) dup_existing_issues
+                  putStrLn "All issues by file:"
+                  putStrLn $ intercalate "\n" $ map (\(filename, issues) -> filename ++ ":\n" ++ (printIssues $ categorize issues)) existing_issue_filelist
+          else return ()
+          putStr $ "Existing issues:\n  "
+          putStrLn $ printIssues $ categorize existing_issues
+          putStr $ "Issues found from queries:\n  "
+          putStrLn $ printIssues $ categorize found_issues
+          putStr $ "New Issues:\n  "
+          putStrLn $ printIssues $ categorize new_issues
   else return ()
   if write
-    then do appendIssues output new_issues
+    then do putStrLn $ "Writing issues to " ++ output
+            appendIssues output new_issues
     else return ()
   return ()
 
@@ -229,7 +266,7 @@ options :: [OptDescr (CommandOptions -> CommandOptions)]
 options =
     [ Option ['v']     ["verbose"]
         (NoArg (\ opts -> opts { optPrintConfig = True }))
-        "Print run configuration."
+        "Print run configuration and its evaluation."
     , Option ['d']     ["dryrun"]
         (NoArg (\ opts -> opts { optFetchIssues = False, optWriteOutput = False }))
         "Do no actual I/O."
@@ -237,13 +274,13 @@ options =
         (ReqArg (\ f opts -> opts { optCommandFile = f }) "FILE")
         "Configuration file name."
     , Option ['f']     ["nofetch"]
-        (NoArg (\ opts -> opts {optFetchIssues = False }))
+        (NoArg (\ opts -> opts { optFetchIssues = False }))
         "Do not fetch issues."
     , Option ['s']     ["scaninput"]
-        (NoArg (\ opts -> opts {optScanOutput = True }))
+        (NoArg (\ opts -> opts { optScanOutput = True }))
         "Always scan the output file for issues."
     , Option ['w']     ["nowrite"]
-        (NoArg (\ opts -> opts {optWriteOutput = False }))
+        (NoArg (\ opts -> opts { optWriteOutput = False }))
         "Do not write new issues to output file."
     ]
 
@@ -271,6 +308,6 @@ main = do
          if optPrintConfig opts
            then describeConfiguration runconfig
            else return ()
-         runConfiguration runconfig (optFetchIssues opts) (optWriteOutput opts)
+         runConfiguration runconfig (optFetchIssues opts) (optWriteOutput opts) (optPrintConfig opts)
          res <- exitSuccess
          exitWith res

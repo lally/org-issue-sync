@@ -1,5 +1,7 @@
 module Sync.Issue.Issue where
 import Data.Maybe (mapMaybe)
+import Data.Ord
+
 data IssueStatus = Open | Active | Closed deriving (Eq, Show)
 
 data Issue = Issue
@@ -17,6 +19,9 @@ issueEqual l r =
 
 instance Eq Issue where
   (==) l r = issueEqual l r
+
+instance Ord Issue where
+  (<=) l r =  (iType l <= iType r) && (origin l <= origin r) && (number l <= number r)
 
 data IssueDelta = IssueDelta { idProperty :: String
                              , idOldValue :: String

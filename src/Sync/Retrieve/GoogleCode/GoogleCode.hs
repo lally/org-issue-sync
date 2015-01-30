@@ -43,7 +43,6 @@ fetch project tags = do
        xlate stat = maybe Open id $ lookup stat
        cleanChar c
         | isAlphaNum c = c
-        | c == '-' = c
         | otherwise = '_'
        cleanTag tag = map cleanChar tag
        makeIssue :: CSVRow -> Issue
