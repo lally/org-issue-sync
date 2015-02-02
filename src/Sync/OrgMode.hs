@@ -163,6 +163,10 @@ generateDocView classifier doc =
       elements = scanOrgForest classifier forest
   in OrgDocView elements doc
 
+getRawElements :: OrgDocView a -> [a]
+getRawElements docview =
+  map fst $ ovElements docview
+
 -- https://github.com/freedomjs/freedom-pgp-e2e/issues/6#issuecomment-69795153
 -- https://code.google.com/p/webrtc/issues/detail?id=3592
 makeIssueUrl :: Issue -> String
@@ -328,17 +332,17 @@ addOrgLine doczip@(OrgDocZipper path@(pn:pns) nodes props) orgline =
   - Then fold the lines over a builder function and a zipper of the
     tree.
 -}
-orgFile :: String -> IO OrgDoc
-orgFile fileContents = do
+orgFile :: String -> OrgDoc
+orgFile fileContents =
   let fileLines = lines fileContents
-      categorizedLines = 
+      categorizedLines =
         map (\(nr, line) -> allRight $ parseLine nr line) $ zip [1..] fileLines
       -- ^ keep the structure reversed, so that the last element's at
       emptyzip = OrgDocZipper [] [] []
       (OrgDocZipper path nodes props) =
         foldl addOrgLine emptyzip categorizedLines
       all_nodes = nodes ++ appendChildrenUpPathToDepth (-1) path
-  return $ OrgDoc categorizedLines all_nodes props
+  in OrgDoc categorizedLines all_nodes props
 
 rstrip xs = reverse $ lstrip $ reverse xs
 lstrip = dropWhile (== ' ')
@@ -499,10 +503,10 @@ getOrgIssue n =
        valOf "ISSUETYPE" draw)
      else Nothing
 
-getOrgIssues :: String -> IO [Issue]
-getOrgIssues contents = do
-  doc <- orgFile contents
-  return $ map fst $ ovElements $ generateDocView getOrgIssue doc
+getOrgIssues :: String -> [Issue]
+getOrgIssues contents =
+  let doc = orgFile contents
+  in map fst $ ovElements $ generateDocView getOrgIssue doc
 
 data IssueChanges = IssueChanges
                     { newIssues :: [Issue]
