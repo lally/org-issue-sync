@@ -1,6 +1,8 @@
 module Sync.Issue where
 import Data.Maybe (mapMaybe)
 import Data.Ord
+import Data.Hashable
+import Data.Bits
 
 data IssueStatus = Open | Active | Closed deriving (Eq, Show)
 
@@ -21,8 +23,16 @@ instance Eq Issue where
   (==) l r = issueEqual l r
 
 instance Ord Issue where
-  (<=) l r =  (iType l <= iType r) && (origin l <= origin r) && (number l <= number r)
+  (<=) l r =  (iType l <= iType r) && (origin l <= origin r) && (
+    number l <= number r)
 
+instance Hashable Issue where
+  hashWithSalt salt iss =
+    (hashWithSalt salt $ origin iss) `xor` (
+      hashWithSalt salt $ number iss) `xor` (
+      hashWithSalt salt $ iType iss)
+
+-- | Updates between issues.  Probably useless.
 data IssueDelta = IssueDelta { idProperty :: String
                              , idOldValue :: String
                              , idNewValue :: String } deriving (Eq, Show)

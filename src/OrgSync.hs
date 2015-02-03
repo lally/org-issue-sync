@@ -14,6 +14,7 @@ import Debug.Trace
 import Control.Applicative
 import Sync.OrgMode
 import Sync.Issue
+import Sync.OrgIssue
 import System.IO
 
 data GoogleCodeSource = GoogleCodeSource
@@ -57,7 +58,8 @@ getMultiList config key =
           filter (\l -> length l > 0) $ map valToList (x:xs)
         otherwise -> []
     Just (DCT.List []) -> []
-    otherwise -> trace ("looking up key " ++ (show key) ++ " results in " ++ show res) []
+    otherwise -> trace ("looking up key " ++ (show key) ++ " results in "
+                        ++ show res) []
 
 loadGCSources :: HM.HashMap DCT.Name DCT.Value -> [GoogleCodeSource]
 loadGCSources config =
@@ -66,7 +68,9 @@ loadGCSources config =
       getRepoData :: T.Text -> [GoogleCodeSource]
       getRepoData repo =
         let rPlus s = repo `T.append` s
-            repoTerms = getMultiList config ("google-code.projects." `T.append` repo `T.append` ".terms")
+            repoTerms = getMultiList config ("google-code.projects."
+                                             `T.append` repo
+                                             `T.append` ".terms")
             makeGC :: [String] -> GoogleCodeSource
             makeGC term = GoogleCodeSource (T.unpack repo) term
         in if length repoTerms > 0
@@ -85,10 +89,13 @@ loadGHSources config =
 
       getProjectData :: T.Text -> T.Text -> [GitHubSource]
       getProjectData user project =
-        let prefix = "github.projects." `T.append` user `T.append` "." `T.append` project
+        let prefix = (
+              "github.projects." `T.append` user `T.append` "."
+              `T.append` project)
             tag_prefix = prefix `T.append` ".tags"
             tags = getMultiList config tag_prefix
-            makeGH taglist = GitHubSource (T.unpack user) (T.unpack project) taglist
+            makeGH taglist = GitHubSource (T.unpack user) (
+              T.unpack project) taglist
         in if length tags > 0
            then map makeGH tags
            else [makeGH []]
@@ -113,14 +120,17 @@ loadConfig config = do
   let gh_list = loadGHSources configmap
       gc_list = loadGCSources configmap
       file_list = Just raw_file_list
-  return $ RunConfiguration <$> raw_file_list <*> output_file <*> (pure gh_list) <*> (pure gc_list)
+  return $ RunConfiguration <$> raw_file_list <*> output_file <*> (
+    pure gh_list) <*> (pure gc_list)
 
-loadOrgIssues :: FilePath -> IO ([Issue])
+loadOrgIssues :: FilePath -> IO (OrgDocView Issue)
 loadOrgIssues file = do
   fh <- openFile file ReadMode
   fileText <- hGetContents fh
   let !len = length fileText
-  return $ getOrgIssues fileText
+      doc = orgFile fileText
+      view = generateDocView getOrgIssue doc
+  return view
 
 describeConfiguration :: RunConfiguration -> IO ()
 describeConfiguration runcfg = do
@@ -146,77 +156,112 @@ describeConfiguration runcfg = do
     else return ()
   putStrLn $ "Will put new issues into " ++ output
 
+-- | Type, Repo, Issue
+categorize :: [Issue] -> [(String, [(String, [Issue])])]
+categorize issues =
+  let byType = groupBy (\a b -> (iType a == iType b)) issues
+      byOrigin s = map (\s -> (origin $ head s, s)) $ groupBy (
+        \a b -> (origin a == origin b)) s
+  in map (\s -> (iType $ head s, byOrigin s)) byType
+
+-- | Print a reasonably-well formatted list of issues, grouped by type
+-- and repo first.  Would be better with pretty-printer support, to
+-- get terminal width, etc.
+printIssues :: [(String, [(String, [Issue])])] -> String
+printIssues issues =
+  let printSingleIssue s = show $ number s
+      printOriginList :: [(String, [Issue])] -> String
+      printOriginList elems =
+          let printOrigin (origin, iss) =
+                 origin ++ ": " ++ (intercalate " " (
+                                       map printSingleIssue iss))
+          in intercalate "\n\t" $ map printOrigin elems
+      printTypeList :: (String, [(String, [Issue])]) -> String
+      printTypeList (type_name, elems) =
+          type_name ++ ":\n\t" ++ (printOriginList elems) ++ "\n"
+  in intercalate "\n  " $ map printTypeList issues
+
+showDuplicateIssues dup_existing_issues existing_issue_filelist =
+  if length dup_existing_issues > 0
+  then do putStr ("Found " ++ (show $ length dup_existing_issues)
+                  ++ " duplicate issues:\n  ")
+          let idIssue iss = (iType iss) ++ ":" ++ (origin iss) ++ "# " ++ (
+                show $ number iss)
+              showiss (iss, cnt) =
+                (show cnt) ++ ": " ++ idIssue iss
+              showfile (fn, iss) =
+                fn ++ ":\n" ++ (printIssues $ categorize iss)
+          putStrLn (intercalate "\n" (
+                       map showiss dup_existing_issues))
+          putStrLn "All issues by file:"
+          putStrLn (intercalate "\n" $
+                    map showfile existing_issue_filelist)
+          return ()
+  else return ()
+
+data IssueFile = IssueFile
+                 { ifPath :: FilePath
+                 , ifDoc :: OrgDocView Issue
+                 } deriving (Show)
+
+instance Eq IssueFile where
+  a == b = ifPath a == ifPath b
+
+loadIssueFile :: FilePath -> IO IssueFile
+loadIssueFile path = do
+  doc <- loadOrgIssues path
+  return $ IssueFile path doc
+
+issueIndex :: IssueFile -> [(Issue, IssueFile)]
+issueIndex ifile =
+  map (\i -> (i, ifile)) $ getRawElements $ ifDoc ifile
+
 runConfiguration :: RunConfiguration -> Bool -> Bool -> Bool -> IO ()
 runConfiguration runcfg fetch write verbose = do
   -- Scan all the existing files.
   let (RunConfiguration orig_scan_files output github googlecode) = runcfg
       scan_files = nub orig_scan_files
-  raw_existing_issues <- mapM loadOrgIssues scan_files
-  let existing_issue_filelist = zip scan_files raw_existing_issues
-      sorted_existing_issues = sort $ concat raw_existing_issues
-      existing_issues = nub sorted_existing_issues
-      dup_existing_issues = map (\issues -> (head issues, length issues)) (
-        filter (\n -> length n > 1) $ groupBy (==) sorted_existing_issues)
+  raw_existing_issues <- mapM loadIssueFile scan_files
+  let existing_issue_index = HM.fromList $ concatMap issueIndex raw_existing_issues
+      existing_issues = HM.keys existing_issue_index
 
   -- Load the issues from our sources
   let loadGHSource (GitHubSource user project tags) =
         GH.fetch Nothing user project (Just Open) tags
       loadGCSource (GoogleCodeSource repo terms) =
         GC.fetch repo terms
+
   if verbose
     then do putStrLn $ "Loading from " ++ (show $ length github) ++ (
               " GitHub queries...")
     else return ()
+
   gh_issues <- if fetch
                then do mapM loadGHSource github
                else return []
+
   if verbose
     then do putStrLn $ "Loading from " ++ (show $ length googlecode) ++ (
               " GoogleCode queries...")
     else return ()
+
   gc_issues <- if fetch
                then do mapM loadGCSource googlecode
                else return []
+
   let found_issues = nub $ sort $ concat (gh_issues ++ gc_issues)
       new_issues = found_issues \\ existing_issues
+      -- TODO(lally): lookup 'difference' to make sure that this is right.
+      changed_issues = found_issues \\ new_issues
 
-  let idIssue iss = (iType iss) ++ ":" ++ (origin iss) ++ "# " ++ (
-        show $ number iss)
-      categorize :: [Issue] -> [(String, [(String, [Issue])])]
-      categorize issues =
-        let byType = groupBy (\a b -> (iType a == iType b)) issues
-            byOrigin s = map (\s -> (origin $ head s, s)) $ groupBy (
-              \a b -> (origin a == origin b)) s
-        in map (\s -> (iType $ head s, byOrigin s)) byType
-      printIssues :: [(String, [(String, [Issue])])] -> String
-      printIssues issues =
-        let printSingleIssue s = show $ number s
-            printOriginList :: [(String, [Issue])] -> String
-            printOriginList elems =
-                let printOrigin (origin, iss) =
-                       origin ++ ": " ++ (intercalate " " (
-                                             map printSingleIssue iss))
-                in intercalate "\n\t" $ map printOrigin elems
-            printTypeList :: (String, [(String, [Issue])]) -> String
-            printTypeList (type_name, elems) =
-                type_name ++ ":\n\t" ++ (printOriginList elems) ++ "\n"
-        in intercalate "\n  " $ map printTypeList issues
+
+  -- scan for changed issues
+
+  -- then for each one, load up the appropriate doc, update the issue->nodes, and then re-write the files.
+
   if verbose
     then do putStrLn $ "Found " ++ (show $ length new_issues) ++ " new issues"
-            if length dup_existing_issues > 0
-              then do putStr ("Found " ++ (show $ length dup_existing_issues)
-                              ++ " duplicate issues:\n  ")
-                      let showiss (iss, cnt) =
-                            (show cnt) ++ ": " ++ idIssue iss
-                          showfile (fn, iss) =
-                            fn ++ ":\n" ++ (printIssues $ categorize iss)
-                      putStrLn (intercalate "\n" (
-                                   map showiss dup_existing_issues))
-                      putStrLn "All issues by file:"
-                      putStrLn (intercalate "\n" $
-                                map showfile existing_issue_filelist)
-                      return ()
-              else return ()
+            -- showDuplicateIssues dup_existing_issues existing_issue_filelist
             putStr $ "Existing issues:\n  "
             putStrLn $ printIssues $ categorize existing_issues
             putStr $ "Issues found from queries:\n  "
@@ -224,9 +269,9 @@ runConfiguration runcfg fetch write verbose = do
             putStr $ "New Issues:\n  "
             putStrLn $ printIssues $ categorize new_issues
     else return ()
+
   if write
     then do putStrLn $ "Writing issues to " ++ output
             appendIssues output new_issues
     else return ()
   return ()
-

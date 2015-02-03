@@ -64,8 +64,6 @@ defaultOptions = Options
   , optFetchIssues = True
   , optScanOutput = True }
 
-
-
 options :: [OptDescr (CommandOptions -> CommandOptions)]
 options =
     [ Option ['v']     ["verbose"]
