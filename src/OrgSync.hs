@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns, OverloadedStrings #-}
+-- TODO(lally): trim down these imports.
 module OrgSync where
 import qualified Data.HashMap.Strict as HM
 import qualified Data.Configurator as DC
@@ -7,7 +8,7 @@ import qualified Data.Text as T
 import qualified Sync.Retrieve.GoogleCode.GoogleCode as GC
 import qualified Sync.Retrieve.GitHub.GitHub as GH
 
-import Data.List (nub, (\\), sort, intersect, groupBy, intercalate)
+import Data.List (nub, (\\), sort, sortBy, intersect, groupBy, intercalate)
 import Data.Maybe
 import System.FilePath.Glob
 import Debug.Trace
@@ -216,14 +217,60 @@ issueIndex :: IssueFile -> [(Issue, IssueFile)]
 issueIndex ifile =
   map (\i -> (i, ifile)) $ getRawElements $ ifDoc ifile
 
+
+-- | Replaces the first elements in a list of pairs with elements that
+-- are Eq to them.
+equivSwap :: (Ord a, Eq a) => [a] -> [(a, b)] -> [(a, b)]
+equivSwap new old =
+  let s_new = sort $ new
+      s_old = sortBy (\f s -> compare (fst f) (fst s)) old
+      swapMergeList :: (Ord a, Eq a) => [a] -> [(a, b)] -> [(a, b)]
+      swapMergeList [] o = o
+      swapMergeList _ []  = []
+      swapMergeList (n:ns) os =
+        let notMatch (a,b) = a /= n
+            next_untouched = takeWhile notMatch os
+            next_swap = dropWhile notMatch os
+            remain = if (length next_swap) > 0
+                     then let (f,s) = head next_swap
+                          in (n,s):(tail next_swap)
+                     else []
+        in next_untouched ++ remain
+        in swapMergeList s_new s_old
+
+-- | Generate a new copy of the OrgDoc in IssueFile, with the new
+-- versions of the issues replacing the old.  Note that the 'snd'
+-- element of each item in the list must be the same, but we only use
+-- the first (list) element's snd.
+updateIssueFile :: [(Issue, IssueFile)] -> IO ()
+updateIssueFile issuelist = do
+  let issues = map fst issuelist
+      file = snd $ head issuelist
+      nodeUpdater node =
+        case getOrgIssue node of
+          Just iss ->
+            if iss `elem` issues
+            then
+              let newiss = head $ dropWhile (/= iss) issues
+              in updateNodeLine newiss node
+            else Nothing
+          Nothing -> Nothing
+      oldDoc = ovDocument $ ifDoc file
+      newNodes = map (updateNode nodeUpdater) $ odNodes $ oldDoc
+      newDoc = oldDoc { odNodes = newNodes }
+      newLines = getTextLines newDoc
+      lineStr = intercalate "\n" $ map tlText newLines
+  writeFile (ifPath file) lineStr
+
 runConfiguration :: RunConfiguration -> Bool -> Bool -> Bool -> IO ()
 runConfiguration runcfg fetch write verbose = do
   -- Scan all the existing files.
   let (RunConfiguration orig_scan_files output github googlecode) = runcfg
       scan_files = nub orig_scan_files
   raw_existing_issues <- mapM loadIssueFile scan_files
-  let existing_issue_index = HM.fromList $ concatMap issueIndex raw_existing_issues
-      existing_issues = HM.keys existing_issue_index
+  let existing_issue_index = concatMap issueIndex raw_existing_issues
+      existing_issue_map = HM.fromList existing_issue_index
+      existing_issues = HM.keys existing_issue_map
 
   -- Load the issues from our sources
   let loadGHSource (GitHubSource user project tags) =
@@ -251,13 +298,17 @@ runConfiguration runcfg fetch write verbose = do
 
   let found_issues = nub $ sort $ concat (gh_issues ++ gc_issues)
       new_issues = found_issues \\ existing_issues
-      -- TODO(lally): lookup 'difference' to make sure that this is right.
+
+      -- scan for changed issues
       changed_issues = found_issues \\ new_issues
+      changed_issue_index =
+        map (\k -> (k, fromJust $ HM.lookup k existing_issue_map )) changed_issues
+      changed_issues_byfile =
+        groupBy (\(_,a) (_,b) -> a == b) changed_issue_index
 
-
-  -- scan for changed issues
-
-  -- then for each one, load up the appropriate doc, update the issue->nodes, and then re-write the files.
+  -- For each changed file, load it up, update the issue->nodes, and
+  -- then re-write the files.
+  mapM updateIssueFile changed_issues_byfile
 
   if verbose
     then do putStrLn $ "Found " ++ (show $ length new_issues) ++ " new issues"

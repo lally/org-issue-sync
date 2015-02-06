@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns, OverloadedStrings #-}
 module Sync.Issue where
 import Data.Maybe (mapMaybe)
 import Data.Ord
@@ -22,9 +23,23 @@ issueEqual l r =
 instance Eq Issue where
   (==) l r = issueEqual l r
 
+-- |Try to make this as fast as we can.
 instance Ord Issue where
-  (<=) l r =  (iType l <= iType r) && (origin l <= origin r) && (
-    number l <= number r)
+  compare l r =
+    let !l_num = number l
+        !r_num = number r
+        !num_comp = compare l_num r_num
+        l_type = iType l
+        r_type = iType r
+        type_comp = compare l_type r_type
+        l_origin = origin l
+        r_origin = origin r
+        origin_comp = compare l_origin r_origin
+    in if num_comp == EQ
+       then if type_comp == EQ
+            then origin_comp
+            else type_comp
+       else num_comp
 
 instance Hashable Issue where
   hashWithSalt salt iss =

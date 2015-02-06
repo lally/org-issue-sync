@@ -1,3 +1,5 @@
+{-# LANGUAGE BangPatterns, OverloadedStrings #-}
+-- TODO(lally): trim down these imports.
 module Sync.OrgIssue where
 import Sync.OrgMode
 import Sync.Issue
@@ -8,7 +10,7 @@ import Data.Maybe (mapMaybe, fromJust, catMaybes)
 import Debug.Trace (trace)
 import Text.Parsec
 import Text.Regex.Posix
-import Text.StringTemplate
+--import Text.StringTemplate
 
 -- https://github.com/freedomjs/freedom-pgp-e2e/issues/6#issuecomment-69795153
 -- https://code.google.com/p/webrtc/issues/detail?id=3592
@@ -20,38 +22,52 @@ makeIssueUrl issue =
      then "https://www.github.com/" ++ org ++ "/issues/" ++ num
      else "https://code.google.com/p/" ++ org ++ "/issues/detail?id=" ++ num
 
+makeIssueOrgHeading :: Int -> Int -> Issue -> TextLine
+makeIssueOrgHeading fstLine depth issue =
+  let prefix = take depth $ repeat '*'
+      todo = map toUpper $ show $ status issue
+      summ = summary issue
+      tgs = if length (tags issue) > 0
+            then " :" ++ (intercalate ":" $ tags issue) ++ ":"
+            else ""
+  in TextLine depth (prefix ++ " " ++ todo ++ " " ++ summ ++ tgs) fstLine
+
+makeIssueOrgDrawer :: Int -> Int -> Issue -> [TextLine]
+makeIssueOrgDrawer fstLine depth issue =
+  let props = [
+        ("ISSUENUM", show $ number issue),
+        ("ISSUEORIGIN", origin issue),
+        ("ISSUEUSER", user issue),
+        ("ISSUETYPE", iType issue)]
+  in makeDrawerLines fstLine depth "PROPERTIES" props
+
 -- Dumb v0.1: just splat issues at the end of files.
-makeIssueOrgHeading :: Int -> Issue -> String
-makeIssueOrgHeading depth issue =
-  let templateStr = unlines [
-        "$prefix$ $TODO$ $summary$ $tags$",
-        "$indent$ :PROPERTIES:",
-        "$indent$ :ISSUENUM: $num$",
-        "$indent$ :ISSUEORIGIN: $origin$",
-        "$indent$ :ISSUEUSER: $user$",
-        "$indent$ :ISSUETYPE: $type$",
-        "$indent$ :END:\n",
-        "$indent$ - [[$url$][Issue Link]]\n"]
-      attribs = [("prefix", take depth $ repeat '*'),
-                 ("indent", take depth $ repeat ' '),
-                 ("TODO", map toUpper $ show $ status issue),
-                 ("num", show $ number issue),
-                 ("summary", summary issue),
-                 ("tags", if length (tags issue) > 0
-                          then ":" ++ (intercalate ":" $ tags issue) ++ ":"
-                          else ""),
-                 ("type", iType issue),
-                 ("origin", origin issue),
-                 ("url", makeIssueUrl issue),
-                 ("user", user issue)]
-      template = newSTMP templateStr
-      filledTempl = setManyAttrib attribs template
-  in toString filledTempl
+makeIssueOrgNode :: Int -> Int -> Issue -> String
+makeIssueOrgNode fstLine depth issue =
+  let indent = take depth $ repeat ' '
+      url = "[[" ++ (makeIssueUrl issue) ++ "][Issue Link]]"
+      heading = makeIssueOrgHeading fstLine depth issue
+      body = makeIssueOrgDrawer (fstLine + 1) depth issue
+      node_text = [tlText $ heading] ++ (map tlText body)
+  in unlines $ node_text ++ [url]
 
 appendIssues :: FilePath -> [Issue] -> IO ()
 appendIssues file issues = do
-  let headings = intercalate "\n" $ map (makeIssueOrgHeading 2) issues
+  let headings = intercalate "\n" $ map (makeIssueOrgNode (-1) 2) issues
   appendFile file headings
+
+issueStatus :: IssueStatus -> String
+issueStatus stat = map toUpper $ show stat
+
+statusIssue :: String -> Maybe IssueStatus
+statusIssue s =
+  case s of
+    "ACTIVE" -> Just Active
+    "CLOSED" -> Just Closed
+    "DONE" -> Just Closed
+    "TODO" -> Just Open
+    "OPEN" -> Just Open
+    _ -> Nothing
 
 getOrgIssue :: Node -> Maybe Issue
 getOrgIssue n =
@@ -71,18 +87,41 @@ getOrgIssue n =
       valOf k d = let matched = filter (\(kk,_) -> kk == k) $ drProperties d
                   in head $ map snd matched
       mapStatus Nothing = Open
-      mapStatus (Just (Prefix s)) = case s of
-        "ACTIVE" -> Active
-        "CLOSED" -> Closed
-        "DONE" -> Closed
-        "TODO" -> Open
-        "OPEN" -> Open
-        _ -> Open
+      mapStatus (Just (Prefix s)) = case (statusIssue s) of
+        Just st -> st
+        Nothing -> Open
   in if (hasPropDrawer n && hasOrigin && hasNum && hasUser && hasType)
-     then Just $ Issue (valOf "ISSUEORIGIN" draw) (read $ valOf "ISSUENUM" draw) (
+     then Just $ Issue (valOf "ISSUEORIGIN" draw) (
+       read $ valOf "ISSUENUM" draw) (
        valOf "ISSUEUSER" draw) (mapStatus $ nPrefix n) (nTags n) (nTopic n) (
        valOf "ISSUETYPE" draw)
      else Nothing
+
+instance NodeUpdate Issue where
+  -- Fill in the Node, and generate a new TextLine for it.
+  -- This will get rather complicated later.
+  updateNodeLine iss node =
+    case getOrgIssue node of
+      Just old_iss ->
+        if old_iss == iss
+        then let old_line = head $ getTextLines node
+                 heading = makeIssueOrgHeading (tlLineNum old_line) (
+                   tlIndent old_line) iss
+                 preseved_tags = filter (elem '@') $ nTags node
+                 cleanChar c
+                   | isAlphaNum c = c
+                   | otherwise = '_'
+                 clean_tags = map (map cleanChar) $ tags iss
+                 new_node = node { nLine = heading
+                                 , nPrefix =
+                                   Just $ Prefix $ map toUpper (
+                                     issueStatus $ status iss)
+                                 , nTags = clean_tags ++ preseved_tags
+                                 , nTopic = summary iss }
+             in Just new_node
+        else Nothing
+      Nothing -> Nothing
+
 
 -- |Pull special properties from the argument Node, and generate a new
 -- TextLine to replace the header line of that Node, representing this
@@ -108,11 +147,9 @@ updateNodeIssue iss nd =
         cleanTag tag = map cleanChar tag
         clean_tags = map cleanTag $ tags iss
         all_tags = if (length (tags iss) > 0)
-                   then " :" ++ (intercalate ":" (clean_tags ++ preseved_tags)) ++ ":"
+                   then " :" ++ (intercalate ":" (
+                                    clean_tags ++ preseved_tags)) ++ ":"
                    else ""
-
-instance NodeUpdate Issue where
-  updateNodeLine = updateNodeIssue
 
 getOrgIssues :: String -> [Issue]
 getOrgIssues contents =
@@ -130,7 +167,8 @@ instance Show IssueChanges where
         showChg (a, b, _) = a ++ "#" ++ (show b)
         firstHeader = (show $ length new) ++ " new issues: \n   "
         firstBody = intercalate "\n   " $ map summary new
-        secondHeader = "\nAnd " ++ (show $ length changed) ++ " issues changed: \n   "
+        numChanged = show $ length changed
+        secondHeader = "\nAnd " ++ numChanged ++ " issues changed: \n   "
         secondBody = intercalate "\n   " $ map showChg changed
     in  firstHeader ++ firstBody ++ secondHeader ++ secondBody
 
@@ -147,3 +185,4 @@ getIssueDeltas prior cur =
            else Nothing
       zipLookup vals k = (k, fromJust $ lookup k vals)
   in IssueChanges new  $ mapMaybe genDelta $ map (zipLookup curs) sames
+
