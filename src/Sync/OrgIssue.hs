@@ -4,13 +4,15 @@ module Sync.OrgIssue where
 import Sync.OrgMode
 import Sync.Issue
 import Control.Monad
+import Control.Exception (handle)
 import Data.Char (toUpper, isAlphaNum)
 import Data.List
 import Data.Maybe (mapMaybe, fromJust, catMaybes)
 import Debug.Trace (trace)
 import Text.Parsec
 import Text.Regex.Posix
---import Text.StringTemplate
+
+-- * Issue <-> Org Mapping
 
 -- https://github.com/freedomjs/freedom-pgp-e2e/issues/6#issuecomment-69795153
 -- https://code.google.com/p/webrtc/issues/detail?id=3592
@@ -23,8 +25,9 @@ makeIssueUrl issue =
      else "https://code.google.com/p/" ++ org ++ "/issues/detail?id=" ++ num
 
 makeIssueOrgHeading :: Int -> Int -> Issue -> TextLine
-makeIssueOrgHeading fstLine depth issue =
-  let prefix = take depth $ repeat '*'
+makeIssueOrgHeading fstLine dpth issue =
+  let depth = if dpth < 1 then 16 else dpth
+      prefix = take depth $ repeat '*'
       todo = map toUpper $ show $ status issue
       summ = summary issue
       tgs = if length (tags issue) > 0
@@ -45,7 +48,7 @@ makeIssueOrgDrawer fstLine depth issue =
 makeIssueOrgNode :: Int -> Int -> Issue -> String
 makeIssueOrgNode fstLine depth issue =
   let indent = take depth $ repeat ' '
-      url = "[[" ++ (makeIssueUrl issue) ++ "][Issue Link]]"
+      url = indent ++ "- [[" ++ (makeIssueUrl issue) ++ "][Issue Link]]"
       heading = makeIssueOrgHeading fstLine depth issue
       body = makeIssueOrgDrawer (fstLine + 1) depth issue
       node_text = [tlText $ heading] ++ (map tlText body)
@@ -68,6 +71,8 @@ statusIssue s =
     "TODO" -> Just Open
     "OPEN" -> Just Open
     _ -> Nothing
+
+-- * Reading and Mutating Issue Nodes
 
 getOrgIssue :: Node -> Maybe Issue
 getOrgIssue n =
@@ -106,7 +111,7 @@ instance NodeUpdate Issue where
         if old_iss == iss
         then let old_line = head $ getTextLines node
                  heading = makeIssueOrgHeading (tlLineNum old_line) (
-                   tlIndent old_line) iss
+                   nDepth node) iss
                  preseved_tags = filter (elem '@') $ nTags node
                  cleanChar c
                    | isAlphaNum c = c
@@ -122,7 +127,6 @@ instance NodeUpdate Issue where
         else Nothing
       Nothing -> Nothing
 
-
 -- |Pull special properties from the argument Node, and generate a new
 -- TextLine to replace the header line of that Node, representing this
 -- (changed) Issue.  Presumably, the Node represents an older revision
@@ -131,10 +135,12 @@ instance NodeUpdate Issue where
 -- user.
 updateNodeIssue :: Issue -> Node -> TextLine
 updateNodeIssue iss nd =
-  TextLine 0 text lineno
+  TextLine indent text lineno
   where text = prefix ++ " " ++ todo ++ " " ++ summ ++ (all_tags)
-        prefix = take 2 $ repeat '*'
-        lineno = tlLineNum $ head $ getTextLines nd
+        node_line = head $ getTextLines nd
+        lineno = tlLineNum node_line
+        indent = tlIndent node_line
+        prefix = take indent $ repeat '*'
         todo = case (status iss) of
           Open -> "OPEN"
           Active -> "ACTIVE"
@@ -155,6 +161,8 @@ getOrgIssues :: String -> [Issue]
 getOrgIssues contents =
   let doc = orgFile contents
   in map fst $ ovElements $ generateDocView getOrgIssue doc
+
+-- * Issue Deltas
 
 data IssueChanges = IssueChanges
                     { newIssues :: [Issue]

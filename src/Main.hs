@@ -55,6 +55,8 @@ data CommandOptions = Options
                       , optWriteOutput :: Bool
                       , optFetchIssues :: Bool
                       , optScanOutput :: Bool
+                      , optDumpIssues :: Bool
+                      , optDiffFile :: String
                       } deriving (Eq, Show)
 
 defaultOptions = Options
@@ -62,7 +64,9 @@ defaultOptions = Options
   , optCommandFile = "./org-issue-sync.conf"
   , optWriteOutput = True
   , optFetchIssues = True
-  , optScanOutput = True }
+  , optScanOutput = True
+  , optDumpIssues = False
+  , optDiffFile = ""}
 
 options :: [OptDescr (CommandOptions -> CommandOptions)]
 options =
@@ -85,6 +89,12 @@ options =
     , Option ['w']     ["nowrite"]
         (NoArg (\ opts -> opts { optWriteOutput = False }))
         "Do not write new issues to output file."
+    , Option ['D']     ["dump"]
+        (NoArg (\ opts -> opts { optDumpIssues = True }))
+        "Dump all issues to stdout"
+    , Option ['d']     ["diff"]
+        (ReqArg (\ f opts -> opts { optDiffFile = f }) "FILE")
+        "Diff scan_files against this file. Implies -f"
     ]
 
 main :: IO ()

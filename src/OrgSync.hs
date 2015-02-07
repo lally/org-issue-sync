@@ -238,12 +238,8 @@ equivSwap new old =
         in next_untouched ++ remain
         in swapMergeList s_new s_old
 
--- | Generate a new copy of the OrgDoc in IssueFile, with the new
--- versions of the issues replacing the old.  Note that the 'snd'
--- element of each item in the list must be the same, but we only use
--- the first (list) element's snd.
-updateIssueFile :: [(Issue, IssueFile)] -> IO ()
-updateIssueFile issuelist = do
+generateIssueFileText :: [(Issue, IssueFile)] -> String
+generateIssueFileText issuelist =
   let issues = map fst issuelist
       file = snd $ head issuelist
       nodeUpdater node =
@@ -259,8 +255,27 @@ updateIssueFile issuelist = do
       newNodes = map (updateNode nodeUpdater) $ odNodes $ oldDoc
       newDoc = oldDoc { odNodes = newNodes }
       newLines = getTextLines newDoc
-      lineStr = intercalate "\n" $ map tlText newLines
-  writeFile (ifPath file) lineStr
+  in intercalate "\n" $ map tlText newLines
+
+-- | Generate a new copy of the OrgDoc in IssueFile, with the new
+-- versions of the issues replacing the old.  Note that the 'snd'
+-- element of each item in the list must be the same, but we only use
+-- the first (list) element's snd.
+updateIssueFile :: [(Issue, IssueFile)] -> IO ()
+updateIssueFile issuelist = do
+  let path = ifPath $ snd $ head issuelist
+      num_issues = show $ length issuelist
+  putStrLn $ "** Rewriting " ++ path ++ " for " ++ num_issues ++ " issues."
+  writeFile path (generateIssueFileText issuelist)
+
+loadIssuesFromConfiguration :: RunConfiguration -> IO [Issue]
+loadIssuesFromConfiguration runcfg = do
+  let (RunConfiguration orig_scan_files _ _ _) = runcfg
+      scan_files = nub orig_scan_files
+  raw_existing_issues <- mapM loadIssueFile scan_files
+  let docs = map ifDoc raw_existing_issues
+      issues = map fst $ concatMap ovElements docs
+  return issues
 
 runConfiguration :: RunConfiguration -> Bool -> Bool -> Bool -> IO ()
 runConfiguration runcfg fetch write verbose = do
@@ -308,7 +323,9 @@ runConfiguration runcfg fetch write verbose = do
 
   -- For each changed file, load it up, update the issue->nodes, and
   -- then re-write the files.
-  mapM updateIssueFile changed_issues_byfile
+  --if write
+  --  then do mapM_ updateIssueFile changed_issues_byfile
+  --  else return ()
 
   if verbose
     then do putStrLn $ "Found " ++ (show $ length new_issues) ++ " new issues"
@@ -325,4 +342,8 @@ runConfiguration runcfg fetch write verbose = do
     then do putStrLn $ "Writing issues to " ++ output
             appendIssues output new_issues
     else return ()
+  return ()
+
+runSimpleDiff :: String -> String -> IO ()
+runSimpleDiff firstFile secondFile = do
   return ()
