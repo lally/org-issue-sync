@@ -259,10 +259,10 @@ addOrgLine doczip@(OrgDocZipper []  nodes properties) orgline =
     (OrgTable line) ->  pseudRootWithChild $ ChildTable $ Table [line]
 
 addOrgLine doczip@(OrgDocZipper path@(pn:pns) nodes props) orgline =
-  let -- TODO(lally): addDrawer should parse as it goes.  But, we have the
-      -- problem of :END: followed with more properties.  We can detect this,
-      -- expensively, by scanning for :END: in the last line of the existing
-      -- drawer.  Correctness over speed!
+  let -- addDrawer should parse as it goes.  But, we have the problem of :END:
+      -- followed with more properties.  We can detect this, expensively, by
+      -- scanning for :END: in the last line of the existing drawer.
+      -- Correctness over speed!
       isEndLine line = ":END:" == (trim $ tlText line)
       openDrawer (Just (ChildDrawer (Drawer _ _ []))) = True
       openDrawer (Just (ChildDrawer (Drawer _ _ lines))) =
@@ -417,7 +417,7 @@ fileProperty = do
 nodeLine :: Parsec String TextLine OrgLine
 nodeLine = do
   let tagList = char ':' >> word `endBy1` char ':'
-        where word = many1 (letter <|> char '-' <|> digit <|> char '_')
+        where word = many1 (letter <|> char '-' <|> digit <|> char '_' <|> char '@')
       validPrefixes = ["TODO", "DONE", "OPEN", "CLOSED", "ACTIVE"]
       orgSuffix = (do tags <- tagList
                       char '\n'
