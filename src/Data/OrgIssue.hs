@@ -1,8 +1,8 @@
 {-# LANGUAGE BangPatterns, OverloadedStrings #-}
 -- TODO(lally): trim down these imports.
-module Sync.OrgIssue where
-import Sync.OrgMode
-import Sync.Issue
+module Data.OrgIssue where
+import Data.OrgMode
+import Data.Issue
 import Control.Monad
 import Control.Exception (handle)
 import Data.Char (toUpper, isAlphaNum)

@@ -1,8 +1,8 @@
 {-# LANGUAGE BangPatterns #-}
-module Sync.OrgMode where
+module Data.OrgMode where
 -- TODO(lally): only export the interesting things!
 
-import Sync.Issue
+-- import Sync.Issue
 
 import Control.Monad
 import Data.Char (toUpper, isAlphaNum)

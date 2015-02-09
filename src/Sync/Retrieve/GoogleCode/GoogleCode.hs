@@ -8,7 +8,7 @@ import Data.List (intercalate)
 import Data.List.Split (splitOn)
 import Data.Text.Encoding
 import qualified Data.Map as M
-import Sync.Issue
+import Data.Issue
 import Network.HTTP
 import Network.URI (escapeURIString, isUnescapedInURI)
 

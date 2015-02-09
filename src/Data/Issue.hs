@@ -1,5 +1,5 @@
 {-# LANGUAGE BangPatterns, OverloadedStrings #-}
-module Sync.Issue where
+module Data.Issue where
 import Data.Maybe (mapMaybe)
 import Data.Ord
 import Data.Hashable

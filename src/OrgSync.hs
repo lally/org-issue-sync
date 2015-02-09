@@ -13,9 +13,9 @@ import Data.Maybe
 import System.FilePath.Glob
 import Debug.Trace
 import Control.Applicative
-import Sync.OrgMode
-import Sync.Issue
-import Sync.OrgIssue
+import Data.OrgMode
+import Data.Issue
+import Data.OrgIssue
 import System.IO
 
 data GoogleCodeSource = GoogleCodeSource

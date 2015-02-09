@@ -12,8 +12,8 @@ import Control.Monad.Catch (catchIOError)
 import Data.List (nub, (\\), sort, intersect, groupBy)
 import Debug.Trace
 import Data.Maybe
-import Sync.OrgMode
-import Sync.Issue
+import Data.OrgMode
+import Data.Issue
 import Data.List (intercalate)
 import System.Console.GetOpt
 import System.Environment (getArgs)
