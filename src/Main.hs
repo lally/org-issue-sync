@@ -57,6 +57,7 @@ data CommandOptions = Options
                       , optScanOutput :: Bool
                       , optDumpIssues :: Bool
                       , optDiffFile :: String
+                      , optUpdateIssues :: Bool
                       } deriving (Eq, Show)
 
 defaultOptions = Options
@@ -66,7 +67,8 @@ defaultOptions = Options
   , optFetchIssues = True
   , optScanOutput = True
   , optDumpIssues = False
-  , optDiffFile = ""}
+  , optDiffFile = ""
+  , optUpdateIssues = True}
 
 options :: [OptDescr (CommandOptions -> CommandOptions)]
 options =
@@ -77,24 +79,27 @@ options =
         (NoArg (\ opts -> opts { optFetchIssues = False,
                                  optWriteOutput = False }))
         "Do no actual I/O."
-    , Option ['i']     ["input"]
+    , Option ['c']     ["config"]
         (ReqArg (\ f opts -> opts { optCommandFile = f }) "FILE")
         "Configuration file name."
-    , Option ['f']     ["nofetch"]
+    , Option ['U']     ["update"]
+        (NoArg (\ opts -> opts { optUpdateIssues = False }))
+        "Do not update issues in scanned files."
+    , Option ['F']     ["nofetch"]
         (NoArg (\ opts -> opts { optFetchIssues = False }))
         "Do not fetch issues."
     , Option ['s']     ["scaninput"]
         (NoArg (\ opts -> opts { optScanOutput = True }))
         "Always scan the output file for issues."
-    , Option ['w']     ["nowrite"]
+    , Option ['W']     ["nowrite"]
         (NoArg (\ opts -> opts { optWriteOutput = False }))
         "Do not write new issues to output file."
     , Option ['D']     ["dump"]
         (NoArg (\ opts -> opts { optDumpIssues = True }))
         "Dump all issues to stdout"
-    , Option ['d']     ["diff"]
+    , Option ['C']     ["compare"]
         (ReqArg (\ f opts -> opts { optDiffFile = f }) "FILE")
-        "Diff scan_files against this file. Implies -f"
+        "Diff scan_files against this file."
     ]
 
 main :: IO ()
@@ -122,10 +127,12 @@ main = do
                            rcScanFiles = (rcOutputFile prerunconfig):(
                               rcScanFiles prerunconfig) }
                          else prerunconfig
+             runopts =
+               RunOptions (optFetchIssues opts) (optWriteOutput opts) (
+                 optPrintConfig opts) (optUpdateIssues opts)
          if optPrintConfig opts
            then describeConfiguration runconfig
            else return ()
-         runConfiguration runconfig (optFetchIssues opts) (
-           optWriteOutput opts) (optPrintConfig opts)
+         runConfiguration runconfig runopts
          res <- exitSuccess
          exitWith res

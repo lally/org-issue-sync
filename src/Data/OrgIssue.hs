@@ -110,18 +110,18 @@ instance NodeUpdate Issue where
       Just old_iss ->
         if old_iss == iss
         then let old_line = head $ getTextLines node
+                 preserved_tags =
+                   let allTags = nTags node
+                       pres = filter (elem '@') allTags
+                   in pres
+                 new_iss = iss { tags = (tags iss) ++ preserved_tags }
                  heading = makeIssueOrgHeading (tlLineNum old_line) (
-                   nDepth node) iss
-                 preseved_tags = filter (elem '@') $ nTags node
-                 cleanChar c
-                   | isAlphaNum c = c
-                   | otherwise = '_'
-                 clean_tags = map (map cleanChar) $ tags iss
+                   nDepth node) new_iss
                  new_node = node { nLine = heading
                                  , nPrefix =
                                    Just $ Prefix $ map toUpper (
                                      issueStatus $ status iss)
-                                 , nTags = clean_tags ++ preseved_tags
+                                 , nTags = (tags iss) ++ preserved_tags
                                  , nTopic = summary iss }
              in Just new_node
         else Nothing
@@ -147,14 +147,9 @@ updateNodeIssue iss nd =
           Closed -> "CLOSED"
         summ = summary iss
         preseved_tags = filter (elem '@') $ nTags nd
-        cleanChar c
-          | isAlphaNum c = c
-          | otherwise = '_'
-        cleanTag tag = map cleanChar tag
-        clean_tags = map cleanTag $ tags iss
         all_tags = if (length (tags iss) > 0)
                    then " :" ++ (intercalate ":" (
-                                    clean_tags ++ preseved_tags)) ++ ":"
+                                    (tags iss) ++ preseved_tags)) ++ ":"
                    else ""
 
 getOrgIssues :: String -> [Issue]

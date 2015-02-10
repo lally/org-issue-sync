@@ -1,5 +1,5 @@
 {-# LANGUAGE BangPatterns, OverloadedStrings #-}
--- TODO(lally): trim down these imports.
+-- TODO(lally): trim down these exports.
 module OrgSync where
 import qualified Data.HashMap.Strict as HM
 import qualified Data.Configurator as DC
@@ -8,7 +8,7 @@ import qualified Data.Text as T
 import qualified Sync.Retrieve.GoogleCode.GoogleCode as GC
 import qualified Sync.Retrieve.GitHub.GitHub as GH
 
-import Data.List (nub, (\\), sort, sortBy, intersect, groupBy, intercalate)
+import Data.List (nub, (\\), sort, sortBy, intersect, groupBy, intercalate, partition)
 import Data.Maybe
 import System.FilePath.Glob
 import Debug.Trace
@@ -28,6 +28,20 @@ data GitHubSource = GitHubSource
                     , ghProject :: String
                     , ghTagLists :: [String]
                     } deriving (Eq, Show)
+
+data RunConfiguration = RunConfiguration
+                        { rcScanFiles :: [FilePath]
+                        , rcOutputFile :: FilePath
+                        , rcGitHubSources :: [GitHubSource]
+                        , rcGoogleCodeSources :: [GoogleCodeSource]
+                        } deriving (Eq, Show)
+
+data RunOptions = RunOptions
+                  { roFetchIssues :: Bool
+                  , roWriteNewIssues :: Bool
+                  , roVerbose :: Bool
+                  , roUpdateIssues :: Bool
+                  } deriving (Eq, Show)
 
 getImmediateChildren :: HM.HashMap DCT.Name DCT.Value -> [T.Text]
 getImmediateChildren hmap = nub $ map (T.takeWhile (/= '.')) $ HM.keys hmap
@@ -101,13 +115,6 @@ loadGHSources config =
            then map makeGH tags
            else [makeGH []]
   in concatMap getRepoData repos
-
-data RunConfiguration = RunConfiguration
-                        { rcScanFiles :: [FilePath]
-                        , rcOutputFile :: FilePath
-                        , rcGitHubSources :: [GitHubSource]
-                        , rcGoogleCodeSources :: [GoogleCodeSource]
-                        } deriving (Eq, Show)
 
 loadConfig :: DCT.Config -> IO (Maybe RunConfiguration)
 loadConfig config = do
@@ -217,27 +224,6 @@ issueIndex :: IssueFile -> [(Issue, IssueFile)]
 issueIndex ifile =
   map (\i -> (i, ifile)) $ getRawElements $ ifDoc ifile
 
-
--- | Replaces the first elements in a list of pairs with elements that
--- are Eq to them.
-equivSwap :: (Ord a, Eq a) => [a] -> [(a, b)] -> [(a, b)]
-equivSwap new old =
-  let s_new = sort $ new
-      s_old = sortBy (\f s -> compare (fst f) (fst s)) old
-      swapMergeList :: (Ord a, Eq a) => [a] -> [(a, b)] -> [(a, b)]
-      swapMergeList [] o = o
-      swapMergeList _ []  = []
-      swapMergeList (n:ns) os =
-        let notMatch (a,b) = a /= n
-            next_untouched = takeWhile notMatch os
-            next_swap = dropWhile notMatch os
-            remain = if (length next_swap) > 0
-                     then let (f,s) = head next_swap
-                          in (n,s):(tail next_swap)
-                     else []
-        in next_untouched ++ remain
-        in swapMergeList s_new s_old
-
 generateIssueFileText :: [(Issue, IssueFile)] -> String
 generateIssueFileText issuelist =
   let issues = map fst issuelist
@@ -248,14 +234,32 @@ generateIssueFileText issuelist =
             if iss `elem` issues
             then
               let newiss = head $ dropWhile (/= iss) issues
-              in updateNodeLine newiss node
+                  line = updateNodeLine newiss node
+              in line
             else Nothing
           Nothing -> Nothing
       oldDoc = ovDocument $ ifDoc file
-      newNodes = map (updateNode nodeUpdater) $ odNodes $ oldDoc
-      newDoc = oldDoc { odNodes = newNodes }
-      newLines = getTextLines newDoc
+      newNodes =
+        let nodes = map (updateNode nodeUpdater) $ odNodes $ oldDoc
+        in nodes
+      newDoc =
+        let doc = oldDoc { odNodes = newNodes }
+        in doc
+      newLines =
+        let lines = getTextLines newDoc
+        in lines
   in intercalate "\n" $ map tlText newLines
+
+-- | Swaps the Issues in in 'index' with those in 'issues'.  Those not
+-- used in the swap are returned as the first part of the pair, and
+-- the swapped result in the second.
+swapIssuesInIndex :: [(Issue, IssueFile)] -> [Issue] -> ([Issue], [(Issue, IssueFile)])
+swapIssuesInIndex index issues =
+  let issmap = HM.fromList index
+      (unused, used) = partition (\i -> isNothing $ HM.lookup i issmap) issues
+      updated :: [(Issue, IssueFile)]
+      updated = map (\k -> (k, fromJust $ HM.lookup k issmap)) used
+  in (unused, updated)
 
 -- | Generate a new copy of the OrgDoc in IssueFile, with the new
 -- versions of the issues replacing the old.  Note that the 'snd'
@@ -277,16 +281,8 @@ loadIssuesFromConfiguration runcfg = do
       issues = map fst $ concatMap ovElements docs
   return issues
 
-runConfiguration :: RunConfiguration -> Bool -> Bool -> Bool -> IO ()
-runConfiguration runcfg fetch write verbose = do
-  -- Scan all the existing files.
-  let (RunConfiguration orig_scan_files output github googlecode) = runcfg
-      scan_files = nub orig_scan_files
-  raw_existing_issues <- mapM loadIssueFile scan_files
-  let existing_issue_index = concatMap issueIndex raw_existing_issues
-      existing_issue_map = HM.fromList existing_issue_index
-      existing_issues = HM.keys existing_issue_map
-
+fetchIssues runcfg verbose = do
+  let (RunConfiguration _ _ github googlecode) = runcfg
   -- Load the issues from our sources
   let loadGHSource (GitHubSource user project tags) =
         GH.fetch Nothing user project (Just Open) tags
@@ -298,34 +294,47 @@ runConfiguration runcfg fetch write verbose = do
               " GitHub queries...")
     else return ()
 
-  gh_issues <- if fetch
-               then do mapM loadGHSource github
-               else return []
+  gh_issues <- mapM loadGHSource github
 
   if verbose
     then do putStrLn $ "Loading from " ++ (show $ length googlecode) ++ (
               " GoogleCode queries...")
     else return ()
 
-  gc_issues <- if fetch
-               then do mapM loadGCSource googlecode
-               else return []
+  gc_issues <- mapM loadGCSource googlecode
 
   let found_issues = nub $ sort $ concat (gh_issues ++ gc_issues)
-      new_issues = found_issues \\ existing_issues
+  return found_issues
 
+runConfiguration :: RunConfiguration -> RunOptions -> IO ()
+runConfiguration runcfg options = do
+  -- Scan all the existing files.
+  let (RunConfiguration orig_scan_files output github googlecode) = runcfg
+      (RunOptions fetch write verbose update) = options
+      scan_files = nub orig_scan_files
+
+  raw_existing_issues <- mapM loadIssueFile scan_files
+
+  let existing_issue_map = HM.fromList $
+                           concatMap issueIndex raw_existing_issues
+      existing_issues = HM.keys existing_issue_map
+
+  found_issues <- if fetch
+                  then fetchIssues runcfg verbose
+                  else return []
+
+  let new_issues = found_issues \\ existing_issues
       -- scan for changed issues
-      changed_issues = found_issues \\ new_issues
-      changed_issue_index =
-        map (\k -> (k, fromJust $ HM.lookup k existing_issue_map )) changed_issues
       changed_issues_byfile =
-        groupBy (\(_,a) (_,b) -> a == b) changed_issue_index
+        let changed = found_issues \\ new_issues
+            idx = map (\k -> (k, fromJust $ HM.lookup k existing_issue_map )) changed
+        in groupBy (\(_,a) (_,b) -> a == b) idx
 
   -- For each changed file, load it up, update the issue->nodes, and
   -- then re-write the files.
-  --if write
-  --  then do mapM_ updateIssueFile changed_issues_byfile
-  --  else return ()
+  if write
+    then do mapM_ updateIssueFile changed_issues_byfile
+    else return ()
 
   if verbose
     then do putStrLn $ "Found " ++ (show $ length new_issues) ++ " new issues"
@@ -347,3 +356,11 @@ runConfiguration runcfg fetch write verbose = do
 runSimpleDiff :: String -> String -> IO ()
 runSimpleDiff firstFile secondFile = do
   return ()
+
+loadIssues :: String -> IO ([(Issue, IssueFile)])
+loadIssues filename = do
+  file <- loadIssueFile filename
+  return $ issueIndex file
+
+
+  
