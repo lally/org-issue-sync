@@ -49,7 +49,7 @@ fetch project tags = do
        makeIssue (id, prio, mstone, relblock, area, status, owner,
                   summary, labels) =
          Issue project id owner (xlate $ map toLower status) (
-           map cleanTag $ map trim $ splitOn "," labels) summary "googlecode"
+           map cleanTag $ map trim $ splitOn "," labels) summary "googlecode" []
    case res of
      Left err -> do putStrLn $ "Failed parse from '" ++ uri ++ "': " ++ err
                     return []

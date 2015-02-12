@@ -215,6 +215,9 @@ data IssueFile = IssueFile
 instance Eq IssueFile where
   a == b = ifPath a == ifPath b
 
+instance Ord IssueFile where
+  compare a b = compare (ifPath a) (ifPath b)
+
 loadIssueFile :: FilePath -> IO IssueFile
 loadIssueFile path = do
   doc <- loadOrgIssues path
@@ -248,7 +251,7 @@ generateIssueFileText issuelist =
       newLines =
         let lines = getTextLines newDoc
         in lines
-  in intercalate "\n" $ map tlText newLines
+  in (intercalate "\n" $ map tlText newLines) ++ "\n"
 
 -- | Swaps the Issues in in 'index' with those in 'issues'.  Those not
 -- used in the swap are returned as the first part of the pair, and
@@ -328,7 +331,8 @@ runConfiguration runcfg options = do
       changed_issues_byfile =
         let changed = found_issues \\ new_issues
             idx = map (\k -> (k, fromJust $ HM.lookup k existing_issue_map )) changed
-        in groupBy (\(_,a) (_,b) -> a == b) idx
+            sorted = sortBy (\(_,a) (_,b) -> compare a b) idx
+        in groupBy (\(_,a) (_,b) -> a == b) sorted
 
   -- For each changed file, load it up, update the issue->nodes, and
   -- then re-write the files.
@@ -362,5 +366,3 @@ loadIssues filename = do
   file <- loadIssueFile filename
   return $ issueIndex file
 
-
-  

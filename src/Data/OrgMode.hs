@@ -274,7 +274,7 @@ addOrgLine doczip@(OrgDocZipper path@(pn:pns) nodes props) orgline =
            then matches !! 0 !! 1
            else ""
       parseDrawerProperty tline =
-        let matches = (tlText tline) =~ " *:([A-Za-z_-]*):(.*)" :: [[String]]
+        let matches = (tlText tline) =~ " *:([-_A-Za-z]*):(.*)" :: [[String]]
         in if length matches > 0
            then [(matches !! 0 !! 1, trim $ matches !! 0 !! 2)]
            else []
@@ -445,7 +445,7 @@ nodeLine = do
 propertyLine :: Parsec String TextLine OrgLine
 propertyLine = do
   manyTill space (char ':')
-  propName <- many1 letter
+  propName <- many1 (letter <|> char '-' <|> digit <|> char '_' <|> char '@')
   char ':'
   remain <- manyTill (satisfy (/= '\n')) (try newline)
   line <- getState

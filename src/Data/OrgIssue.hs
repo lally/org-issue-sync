@@ -14,7 +14,7 @@ import Text.Regex.Posix
 
 -- * Issue <-> Org Mapping
 
--- https://github.com/freedomjs/freedom-pgp-e2e/issues/6#issuecomment-69795153
+-- https://github.com/freedomjs/freedom-pgp-e2e/issues/6
 -- https://code.google.com/p/webrtc/issues/detail?id=3592
 makeIssueUrl :: Issue -> String
 makeIssueUrl issue =
@@ -99,7 +99,7 @@ getOrgIssue n =
      then Just $ Issue (valOf "ISSUEORIGIN" draw) (
        read $ valOf "ISSUENUM" draw) (
        valOf "ISSUEUSER" draw) (mapStatus $ nPrefix n) (nTags n) (nTopic n) (
-       valOf "ISSUETYPE" draw)
+       valOf "ISSUETYPE" draw) []
      else Nothing
 
 instance NodeUpdate Issue where

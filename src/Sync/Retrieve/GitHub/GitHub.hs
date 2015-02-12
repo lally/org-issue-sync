@@ -29,7 +29,7 @@ convertIssue origin iss =
         | otherwise = '_'
       cleanTag tag = map cleanChar tag
       cleanTags = map cleanTag tags
-  in Issue origin (GD.issueNumber iss) userName status cleanTags (strip $ GD.issueTitle iss) "github"
+  in Issue origin (GD.issueNumber iss) userName status cleanTags (strip $ GD.issueTitle iss) "github" []
 
 fetch :: Maybe String -> String -> String -> Maybe IssueStatus -> [String] -> IO [Issue]
 fetch tok user repo stat tags = do

@@ -4,8 +4,21 @@ import Data.Maybe (mapMaybe)
 import Data.Ord
 import Data.Hashable
 import Data.Bits
+import Data.Time
 
 data IssueStatus = Open | Active | Closed deriving (Eq, Show)
+
+data IssueEventDetails = IssueStatusChange { isNewStatus :: IssueStatus }
+                       | IssueComment { icComment :: String }
+                       | IssueLabelChange { ilNewLabels :: [String], ilRemovedLabels :: [String] }
+                       | IssueMilestoneChange { imNewMileStone :: Maybe String, imOldMileStone :: Maybe String }
+                       deriving (Eq, Show)
+
+data IssueEvent = IssueEvent
+                  { ieWhen :: UTCTime
+                  , ieUser :: String
+                  , ieDetails :: IssueEventDetails
+                  } deriving (Eq, Show)
 
 data Issue = Issue
              { origin :: String
@@ -15,6 +28,7 @@ data Issue = Issue
              , tags :: [String]
              , summary :: String
              , iType :: String
+             , events :: [IssueEvent]
              } deriving (Show)
 
 issueEqual l r =
