@@ -5,9 +5,10 @@ import Data.OrgMode
 import Data.Issue
 import Control.Monad
 import Control.Exception (handle)
-import Data.Char (toUpper, isAlphaNum)
+import Data.Char (toUpper, isAlphaNum, isSpace)
 import Data.List
-import Data.Maybe (mapMaybe, fromJust, catMaybes)
+import Data.Maybe (mapMaybe, fromJust, catMaybes, isJust)
+import Data.Monoid
 import Debug.Trace (trace)
 import Text.Parsec
 import Text.Regex.Posix
@@ -24,7 +25,7 @@ makeIssueUrl issue =
      then "https://www.github.com/" ++ org ++ "/issues/" ++ num
      else "https://code.google.com/p/" ++ org ++ "/issues/detail?id=" ++ num
 
-makeIssueOrgHeading :: Int -> Int -> Issue -> TextLine
+makeIssueOrgHeading :: LineNumber -> Int -> Issue -> TextLine
 makeIssueOrgHeading fstLine dpth issue =
   let depth = if dpth < 1 then 16 else dpth
       prefix = take depth $ repeat '*'
@@ -35,7 +36,7 @@ makeIssueOrgHeading fstLine dpth issue =
             else ""
   in TextLine depth (prefix ++ " " ++ todo ++ " " ++ summ ++ tgs) fstLine
 
-makeIssueOrgDrawer :: Int -> Int -> Issue -> [TextLine]
+makeIssueOrgDrawer :: LineNumber -> Int -> Issue -> [TextLine]
 makeIssueOrgDrawer fstLine depth issue =
   let props = [
         ("ISSUENUM", show $ number issue),
@@ -45,18 +46,22 @@ makeIssueOrgDrawer fstLine depth issue =
   in makeDrawerLines fstLine depth "PROPERTIES" props
 
 -- Dumb v0.1: just splat issues at the end of files.
-makeIssueOrgNode :: Int -> Int -> Issue -> String
+makeIssueOrgNode :: LineNumber -> Int -> Issue -> String
 makeIssueOrgNode fstLine depth issue =
   let indent = take depth $ repeat ' '
-      url = indent ++ "- [[" ++ (makeIssueUrl issue) ++ "][Issue Link]]"
       heading = makeIssueOrgHeading fstLine depth issue
-      body = makeIssueOrgDrawer (fstLine + 1) depth issue
+      drawer = makeIssueOrgDrawer (mappend fstLine (Line 1)) depth issue
+      url_text = indent ++ "- [[" ++ (makeIssueUrl issue) ++ "][Issue Link]]"
+      url = TextLine depth url_text (mconcat [fstLine, Line 1, Line (length drawer)])
+      body = drawer ++ [url] ++ (
+        getTextLines $ makeIssueSubNode (depth+1) (
+           mconcat [fstLine, Line 2, Line $ length drawer]) issue)
       node_text = [tlText $ heading] ++ (map tlText body)
-  in unlines $ node_text ++ [url]
+  in unlines $ node_text
 
 appendIssues :: FilePath -> [Issue] -> IO ()
 appendIssues file issues = do
-  let headings = intercalate "\n" $ map (makeIssueOrgNode (-1) 2) issues
+  let headings = intercalate "\n" $ map (makeIssueOrgNode NoLine 2) issues
   appendFile file headings
 
 issueStatus :: IssueStatus -> String
@@ -102,6 +107,81 @@ getOrgIssue n =
        valOf "ISSUETYPE" draw) []
      else Nothing
 
+wrapLine :: Int -> TextLine -> [TextLine]
+wrapLine width (TextLine indent string linenum) =
+  let wrapLen _ [] = []
+      wrapLen len str
+        | length str < len = str
+        | otherwise =
+        let first_word = takeWhile (not . isSpace) str
+            is_first_too_long = length first_word >= len
+            max_width = reverse $ take len str
+            wrapped_back = if is_first_too_long
+                           then first_word
+                           else reverse $ dropWhile (not . isSpace) max_width
+            remain = drop (length wrapped_back) str
+        in if length wrapped_back > 0
+           then wrapped_back ++ "\n" ++ wrapLen len remain
+           else ""
+      desired_len = width - indent
+      strings = lines $ concatMap (wrapLen desired_len) $ lines string
+      line_nrs = linesStartingFrom linenum
+      makeTextLine (str, nr) = TextLine indent str nr
+  in map makeTextLine $ zip strings line_nrs
+
+prefixLine :: String -> TextLine -> TextLine
+prefixLine pfx (TextLine indent string linenum) =
+  let new_str = pfx ++ string
+      new_indent = length $ takeWhile isSpace new_str
+  in TextLine new_indent new_str linenum
+
+makeIssueSubNode :: Int -> LineNumber -> Issue -> NodeChild
+makeIssueSubNode depth fst_line iss =
+  let prefix = take depth $ repeat '*'
+      makeIssueLine :: LineNumber -> IssueEvent -> [NodeChild]
+      makeIssueLine line_nr (IssueEvent when user details) =
+        let line = TextLine depth "" line_nr
+            linePrefix = (take depth $ repeat ' ')
+            eventLine s = line { tlText = (linePrefix ++ "- " ++
+                                           (show when) ++ "/ " ++
+                                           user ++ ": " ++ s) }
+            eventText s = ChildText $ eventLine s
+        in case details of
+          IssueStatusChange status -> [eventText (show status)]
+          IssueComment comment ->
+            let lines = wrapLine (78 - depth) (eventLine comment)
+                prefixedFirstLine = head lines
+                prefixedRemain = map (prefixLine ("  ")) $ tail lines
+            in map ChildText (prefixedFirstLine:prefixedRemain)
+          IssueOwnerChange owner -> [eventText $ "New Owner: " ++ owner]
+          IssueLabelChange new old ->
+            [eventText $ prefix ++ middle ++ suffix]
+            where
+              prefix = if length new > 0
+                       then "New Labels: " ++ (intercalate "," new)
+                       else ""
+              suffix = if length old > 0
+                       then "Old Labels: " ++ (intercalate "," old)
+                       else ""
+              middle = if length old > 0 && length new > 0
+                       then ", "
+                       else ""
+          IssueMilestoneChange newms oldms ->
+            [eventText $ "Milestone " ++ old ++ " -> " ++ new]
+            where
+              fromMaybe :: String -> Maybe String -> String
+              fromMaybe s (Just t) = t
+              fromMaybe s Nothing = s
+              old = fromMaybe "(no prior milestone)" oldms
+              new = fromMaybe "(no new milestone)" newms
+      issueStartingFrom _ [] = []
+      issueStartingFrom line_nr (e:es) =
+        let cur_child = makeIssueLine line_nr e
+        in cur_child ++ (issueStartingFrom (mappend line_nr (Line $ length cur_child)) es)
+      children = issueStartingFrom (mappend fst_line (Line 1)) $ events iss
+  in ChildNode $ Node depth Nothing [] children "ISSUE EVENTS" (
+    TextLine 0 (prefix++" ISSUE EVENTS") fst_line)
+
 instance NodeUpdate Issue where
   -- Fill in the Node, and generate a new TextLine for it.
   -- This will get rather complicated later.
@@ -117,12 +197,24 @@ instance NodeUpdate Issue where
                  new_iss = iss { tags = (tags iss) ++ preserved_tags }
                  heading = makeIssueOrgHeading (tlLineNum old_line) (
                    nDepth node) new_iss
+                 isGeneratedChild (ChildNode nd) = nTopic nd == "ISSUE EVENTS"
+                 isGeneratedChild _ = False
+                 oldChildNode = filter isGeneratedChild $ nChildren node
+                 oldChildNodeLineNr =
+                   if length oldChildNode > 0
+                   then tlLineNum . head . getTextLines . head $ oldChildNode
+                   else NoLine
+                 regularChildren =
+                   filter (not . isGeneratedChild) $ nChildren node
+                 childNode =
+                   makeIssueSubNode (1 + nDepth node) oldChildNodeLineNr iss
                  new_node = node { nLine = heading
                                  , nPrefix =
                                    Just $ Prefix $ map toUpper (
                                      issueStatus $ status iss)
                                  , nTags = (tags iss) ++ preserved_tags
-                                 , nTopic = summary iss }
+                                 , nTopic = summary iss
+                                 , nChildren = childNode:regularChildren }
              in Just new_node
         else Nothing
       Nothing -> Nothing

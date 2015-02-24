@@ -1,6 +1,7 @@
 module Sync.Retrieve.GoogleCode.GoogleCode where
 
 import qualified Data.Csv as CSV
+import Sync.Retrieve.GoogleCode.Parse
 import Data.Char (toLower, isSpace, ord, isAlphaNum)
 import Data.Vector (Vector, toList)
 import Data.ByteString.Lazy.Char8 (pack)
@@ -22,8 +23,19 @@ trim = f . f
 
 parseFile :: String -> Either String (Vector CSVRow)
 parseFile file =
-  let myOptions = CSV.defaultDecodeOptions { CSV.decDelimiter = fromIntegral (ord ',') }
+  let myOptions = CSV.defaultDecodeOptions {
+        CSV.decDelimiter = fromIntegral (ord ',') }
   in CSV.decodeWith myOptions CSV.HasHeader $ pack file
+
+
+fetchDetails :: String -> Int -> IO [IssueEvent]
+fetchDetails repo issueNum = do
+  let openURL x = getResponseBody =<< simpleHTTP (getRequest x)
+      url = ("http://code.google.com/p/" ++ repo ++ "/issues/detail?id=" ++
+             (show issueNum) ++ "&can=3&colspec=ID%20Pri%20Mstone%20" ++
+             "ReleaseBlock%20Area%20Status%20Owner%20Summary")
+  text <- openURL url
+  return $ parseIssueText text
 
 -- | Takes a project and a list of tags, returns [Issue]
 fetch :: String -> [String] -> IO ([Issue])
@@ -35,7 +47,7 @@ fetch project tags = do
               "%20Status%20Owner%20Summary")
    body <- simpleHTTP (getRequest uri) >>= getResponseBody
 
-   -- ID, Pri,	Mstone, ReleaseBlock,	Area,	Status, Owner, Summary, Labels
+   -- ID, Pri, Mstone, ReleaseBlock, Area, Status, Owner, Summary, Labels
    let res = parseFile body
        lookup stat = M.lookup stat (M.fromList [
                                        ("assigned", Open), ("closed", Closed),
@@ -50,8 +62,13 @@ fetch project tags = do
                   summary, labels) =
          Issue project id owner (xlate $ map toLower status) (
            map cleanTag $ map trim $ splitOn "," labels) summary "googlecode" []
-   case res of
-     Left err -> do putStrLn $ "Failed parse from '" ++ uri ++ "': " ++ err
-                    return []
-     Right vals -> do let issues = toList vals :: [CSVRow]
-                      return $ map makeIssue issues
+   issues <- case res of
+         Left err -> do putStrLn $ "Failed parse from '" ++ uri ++ "': " ++ err
+                        return []
+         Right vals -> do let issues = toList vals :: [CSVRow]
+                          return $ map makeIssue issues
+   let lookupIssue :: Issue -> IO Issue
+       lookupIssue iss = do
+         details <- fetchDetails (origin iss) (number iss)
+         return $ iss { events = details }
+   mapM lookupIssue issues

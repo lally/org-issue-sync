@@ -1,9 +1,15 @@
-module Sync.Retrieve.GoogleCode.Parse where
+module Sync.Retrieve.GoogleCode.Parse (parseIssueText) where
 
 import Text.HTML.TagSoup
 import Text.StringLike
 import Debug.Trace
 import Data.Maybe
+import Data.Issue
+import Data.Time.Calendar
+import Data.Time.Clock
+import Data.Time.Format
+import System.Locale
+
 
 data DepthTaggedTag str = DepthTaggedTag Int (Tag str) deriving (Eq)
 
@@ -68,12 +74,11 @@ separateChildrenDivs tags =
 trim xs =
   let rstrip xs = reverse $ lstrip $ reverse xs
       lstrip = dropWhile isWhiteSpace
-      isWhiteSpace c 
+      isWhiteSpace c
         | c == ' ' = True
         | c == '\r' = True
         | c == '\n' = True
         | otherwise = False
-
   in lstrip $ rstrip xs
 
 
@@ -82,8 +87,32 @@ parseIssueDescription tags =
       desc = innerText $ take 3 $ dropWhile (~/= "<pre") $ tags
   in (user, trim desc)
 
-scanUpdateBox [] = []
-scanUpdateBox tags =
+scanStatusChange :: UTCTime -> String -> String -> IssueEvent
+scanStatusChange when user value =
+  let newStat = case trim value of
+        "Started" -> Active
+        "Fixed" -> Closed
+        otherwise -> Open
+      statChange = IssueStatusChange newStat
+  in IssueEvent when user statChange
+
+scanOwnerChange :: UTCTime -> String -> String -> IssueEvent
+scanOwnerChange when user value =
+  let statChange = IssueOwnerChange $ trim value
+  in IssueEvent when user statChange
+
+scanLabelChange :: UTCTime -> String -> String -> IssueEvent
+scanLabelChange when user value =
+  let unsub :: String -> Bool
+      unsub s = head s == '-'
+      newLabels = filter (\x -> not . unsub $ x) $ words value
+      oldLabels = map tail $ filter unsub $ words value
+      labelChange = IssueLabelChange newLabels oldLabels
+  in IssueEvent when user labelChange
+
+scanUpdateBox :: UTCTime -> String -> [Tag String] -> [Maybe IssueEvent]
+scanUpdateBox when user [] = []
+scanUpdateBox when user tags =
   let stat_update_text = "Status:"
       owner_update_text = "Owner:"
       label_update_text = "Labels:"
@@ -93,21 +122,32 @@ scanUpdateBox tags =
       rest = dropWhile (~/= "<br") t
       recognized_update =
         if key == stat_update_text
-        then Just ("STAT_UPDATE", value)
+        then Just $ scanStatusChange when user value -- ("STAT_UPDATE", value)
         else if key == owner_update_text
-             then Just ("OWNER_UPDATE", value)
+             then Just $ scanOwnerChange when user value
              else if key == label_update_text
-                  then Just ("LABEL_UPDATE", value)
+                  then Just $ scanLabelChange when user value
                   else Nothing
-  in recognized_update:(scanUpdateBox rest)
-
+  in recognized_update:(scanUpdateBox when user rest)
 
 -- | Classify the update and put out any relevant IssueUpdates from it.
 parseIssueUpdate tags =
   let no_comment = "(No comment was entered for this change.)"
+      date_text = trim . innerText . fst . matchExternalTag "<span class=date" $ tags
+      parsed_date = parseTime defaultTimeLocale "%b %e, %Y" date_text
+      when = maybe (UTCTime (ModifiedJulianDay 0) 0) id parsed_date
       user = innerText $ take 3 $ dropWhile (~/= "<a class=userlink") $ tags
       comment = trim $ innerText $ take 4 $ dropWhile (~/= "<pre") tags
       has_no_comment = no_comment == comment
-      comment_result = if has_no_comment then Nothing else Just comment
+      comment_result = if has_no_comment
+                       then Nothing
+                       else Just $ IssueEvent when user $ IssueComment comment
       update_box = fst $ matchExternalTag "<div class=box-inner" tags
-  in (user, comment_result, catMaybes $ scanUpdateBox update_box)
+      updates = scanUpdateBox when user update_box
+  in catMaybes (comment_result:(updates))
+
+parseIssueText :: String -> [IssueEvent]
+parseIssueText text =
+  let hist = extractHistoryTags $ parseTags text
+      cl = separateChildrenDivs hist
+  in concatMap parseIssueUpdate cl

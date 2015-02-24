@@ -10,6 +10,7 @@ data IssueStatus = Open | Active | Closed deriving (Eq, Show)
 
 data IssueEventDetails = IssueStatusChange { isNewStatus :: IssueStatus }
                        | IssueComment { icComment :: String }
+                       | IssueOwnerChange { ieNewOwner :: String }
                        | IssueLabelChange { ilNewLabels :: [String], ilRemovedLabels :: [String] }
                        | IssueMilestoneChange { imNewMileStone :: Maybe String, imOldMileStone :: Maybe String }
                        deriving (Eq, Show)

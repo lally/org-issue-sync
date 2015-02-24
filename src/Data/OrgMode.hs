@@ -7,7 +7,8 @@ module Data.OrgMode where
 import Control.Monad
 import Data.Char (toUpper, isAlphaNum)
 import Data.List
-import Data.Maybe (mapMaybe, fromJust, catMaybes)
+import Data.Maybe (mapMaybe, fromJust, catMaybes, isJust, isNothing)
+import Data.Monoid
 import Debug.Trace (trace)
 import Text.Parsec
 import Text.Regex.Posix
@@ -16,13 +17,44 @@ import Text.StringTemplate
 --
 -- * Data Decls
 --
+
+-- | Line numbers, where we can have an unattached root.
+data LineNumber = NoLine
+                | Line Int
+                deriving (Eq, Show)
+
+instance Monoid LineNumber where
+  mempty = NoLine
+  mappend NoLine _ = NoLine
+  mappend _ NoLine = NoLine
+  mappend (Line a) (Line b) = Line (a+b)
+
+instance Ord LineNumber where
+  compare NoLine NoLine = EQ
+  compare NoLine (Line _) = LT
+  compare (Line _) NoLine = GT
+  compare (Line a) (Line b) = compare a b
+
+isNumber :: LineNumber -> Bool
+isNumber NoLine = False
+isNumber (Line _) = True
+
+linesStartingFrom :: LineNumber -> [LineNumber]
+linesStartingFrom NoLine = repeat NoLine
+linesStartingFrom (Line l) = map Line [l..]
+
 -- | Raw data about each line of text.  Currently a bit hacked, with
 -- 'tlLineNum == 0' indicating a fake line.
 data TextLine = TextLine
                 { tlIndent :: Int  -- how long of a whitespace prefix is in tlText?
                 , tlText :: String
-                , tlLineNum :: Int
+                , tlLineNum :: LineNumber
                 } deriving (Eq)
+
+hasNumber :: TextLine -> Bool
+hasNumber (TextLine _ _ (Line _)) = True
+hasNumber _ = False
+
 
 -- | Currently a simple getter.  TODO(lally): extend with enough here
 -- to let us write out a modified .org file, preserving as much of the
@@ -158,7 +190,7 @@ instance TextLineSource Node where
 
 instance TextLineSource OrgFileProperty where
   getTextLines prop =
-    [TextLine 0 ("#+" ++ (fpName prop) ++ ": " ++ (fpValue prop)) (-1)]
+    [TextLine 0 ("#+" ++ (fpName prop) ++ ": " ++ (fpValue prop)) NoLine]
 
 instance TextLineSource OrgLine where
   getTextLines (OrgText t) = [t]
@@ -172,27 +204,30 @@ instance TextLineSource OrgDoc where
   getTextLines doc =
     let docLines = concatMap getTextLines $ odNodes doc
         propLines = concatMap getTextLines $ odProperties doc
-        fixLine (l, nr) = if tlLineNum l < 0
-                           then l { tlLineNum = nr }
-                           else l
+        fixLine (l, nr) =
+          if hasNumber l
+          then l
+          else l { tlLineNum = nr }
         -- Fix the document lines, but let any property lines
         fixed_docLines =
-          map fixLine $ zip docLines [1..]
-        unsorted_propLines = filter (\l -> tlLineNum l < 0) propLines
-        sorted_propLines = filter (\l -> tlLineNum l >= 0) propLines
+          map fixLine $ zip docLines $ map Line [1..]
+        unsorted_propLines = filter (not . hasNumber) propLines
+        sorted_propLines = filter hasNumber propLines
     in unsorted_propLines ++ sort (fixed_docLines ++ sorted_propLines)
 
 -- * Constructors
-makeDrawerLines :: Int -> Int -> String -> [(String, String)] -> [TextLine]
+makeDrawerLines :: LineNumber -> Int -> String -> [(String, String)] -> [TextLine]
 makeDrawerLines fstLine depth name props =
   let !indent = take depth $ repeat ' '
       headline =
         TextLine depth (indent ++ ":" ++ (map toUpper name) ++ ":") fstLine
+      mAdd  (Just x) y = Just (x + y)
+      mAdd Nothing y = Nothing
       lastline =
-        TextLine depth (indent ++ ":END:") (fstLine + length props + 1)
+        TextLine depth (indent ++ ":END:") (mappend fstLine $ Line (length props + 1))
       makePropLine ((prop, value), nr) =
-        TextLine depth (indent ++ ":" ++ prop ++ ": " ++ value) nr
-      proplines = map makePropLine $ zip props [(1+fstLine)..]
+        TextLine depth (indent ++ ":" ++ prop ++ ": " ++ value) (mappend fstLine $ Line nr)
+      proplines = map makePropLine $ zip props [1..]
   in (headline:(proplines)) ++ [lastline]
 
 generateDocView :: (Node -> Maybe a) -> OrgDoc -> OrgDocView a
@@ -227,6 +262,7 @@ trim xs =
 
 -- | Closes up the path for the zipper, up to the specified depth.
 appendChildrenUpPathToDepth :: Int -> [Node] -> [Node]
+appendChildrenUpPathToDepth _ [] = []
 appendChildrenUpPathToDepth depth [n] = [n { nChildren = reverse $ nChildren n }]
 appendChildrenUpPathToDepth depth (n:ns)
   | nDepth n > depth =
@@ -378,7 +414,7 @@ orgPropDrawer = do manyTill space (char ':') <?> "Property Drawer"
                    manyTill space newline
                    return $ ChildDrawer $ Drawer drawerName props []
 
-emptyTextLine = TextLine 0 "" 0
+emptyTextLine = TextLine 0 "" NoLine
 
 -- Any line that isn't a node.
 orgBodyLine :: Parsec String st NodeChild
@@ -387,7 +423,7 @@ orgBodyLine = do firstChar <- satisfy (\a -> (a /= '*') && (a /= '#'))
                    then do rest <- manyTill anyChar newline
                            let allText = (firstChar : rest)
                                indent = length $ takeWhile (== ' ') allText
-                           return $ ChildText $ TextLine indent allText 0
+                           return $ ChildText $ TextLine indent allText NoLine
                    else return $ ChildText emptyTextLine
 
 orgProperty :: Parsec String st OrgFileElement
@@ -478,7 +514,7 @@ classifyOrgLine = do
 parseLine :: Int -> String -> Either ParseError OrgLine
 parseLine lineno s = do
   let indent = length $ takeWhile (== ' ') s
-      line = TextLine indent s lineno
+      line = TextLine indent s (Line lineno)
     in runParser classifyOrgLine line "input" (s ++ "\n")
 
 -- * Update an OrgMode doc
