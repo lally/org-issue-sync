@@ -1,7 +1,13 @@
 {-# LANGUAGE BangPatterns #-}
-module Data.OrgMode where
+module Data.OrgMode (
+  Prefix(..), Drawer(..), Babel(..), Table(..), NodeChild(..), Node(..),
+  OrgFile(..), OrgFileProperty(..), OrgFileElement(..),
+  OrgDocView(..), NodeUpdate(..), OrgDoc(..),
+  orgFile, generateDocView, getRawElements, updateNode
+  ) where
 -- TODO(lally): only export the interesting things!
 
+import Data.OrgMode.Text
 -- import Sync.Issue
 
 import Control.Monad
@@ -17,50 +23,6 @@ import Text.StringTemplate
 --
 -- * Data Decls
 --
-
--- | Line numbers, where we can have an unattached root.
-data LineNumber = NoLine
-                | Line Int
-                deriving (Eq, Show)
-
-instance Monoid LineNumber where
-  mempty = NoLine
-  mappend NoLine _ = NoLine
-  mappend _ NoLine = NoLine
-  mappend (Line a) (Line b) = Line (a+b)
-
-instance Ord LineNumber where
-  compare NoLine NoLine = EQ
-  compare NoLine (Line _) = LT
-  compare (Line _) NoLine = GT
-  compare (Line a) (Line b) = compare a b
-
-isNumber :: LineNumber -> Bool
-isNumber NoLine = False
-isNumber (Line _) = True
-
-linesStartingFrom :: LineNumber -> [LineNumber]
-linesStartingFrom NoLine = repeat NoLine
-linesStartingFrom (Line l) = map Line [l..]
-
--- | Raw data about each line of text.  Currently a bit hacked, with
--- 'tlLineNum == 0' indicating a fake line.
-data TextLine = TextLine
-                { tlIndent :: Int  -- how long of a whitespace prefix is in tlText?
-                , tlText :: String
-                , tlLineNum :: LineNumber
-                } deriving (Eq)
-
-hasNumber :: TextLine -> Bool
-hasNumber (TextLine _ _ (Line _)) = True
-hasNumber _ = False
-
-
--- | Currently a simple getter.  TODO(lally): extend with enough here
--- to let us write out a modified .org file, preserving as much of the
--- original input document structure as we can.
-class TextLineSource s where
-  getTextLines :: s -> [TextLine]
 
 data Prefix = Prefix String deriving (Eq)
 
@@ -94,11 +56,14 @@ data Node = Node
             , nLine :: TextLine
             } deriving (Eq)
 
-data OrgFile = OrgFile { orgTitle :: String,
-                         orgProps :: [(String, String)],
-                         orgNodes :: [Node] } deriving (Eq, Show)
-data OrgFileProperty = OrgFileProperty { fpName :: String,
-                                        fpValue :: String } deriving (Eq, Show)
+data OrgFile = OrgFile { orgTitle :: String
+                       , orgProps :: [(String, String)]
+                       , orgNodes :: [Node]
+                       } deriving (Eq, Show)
+
+data OrgFileProperty = OrgFileProperty { fpName :: String
+                                       , fpValue :: String
+                                       } deriving (Eq, Show)
 
 data OrgFileElement = OrgTopProperty OrgFileProperty
                     | OrgTopLevel { tlNode :: Node }
@@ -145,12 +110,6 @@ data OrgDocView a = OrgDocView
 --
 -- * Instance Decls
 --
-instance Show TextLine where
-  show tl = (show $tlLineNum tl) ++ ":" ++ (tlText tl)
-
-instance Ord TextLine where
-  compare a b = compare (tlLineNum a) (tlLineNum b)
-
 instance Show Prefix where
   show (Prefix s) = s
 instance Show Drawer where
@@ -216,20 +175,6 @@ instance TextLineSource OrgDoc where
     in unsorted_propLines ++ sort (fixed_docLines ++ sorted_propLines)
 
 -- * Constructors
-makeDrawerLines :: LineNumber -> Int -> String -> [(String, String)] -> [TextLine]
-makeDrawerLines fstLine depth name props =
-  let !indent = take depth $ repeat ' '
-      headline =
-        TextLine depth (indent ++ ":" ++ (map toUpper name) ++ ":") fstLine
-      mAdd  (Just x) y = Just (x + y)
-      mAdd Nothing y = Nothing
-      lastline =
-        TextLine depth (indent ++ ":END:") (mappend fstLine $ Line (length props + 1))
-      makePropLine ((prop, value), nr) =
-        TextLine depth (indent ++ ":" ++ prop ++ ": " ++ value) (mappend fstLine $ Line nr)
-      proplines = map makePropLine $ zip props [1..]
-  in (headline:(proplines)) ++ [lastline]
-
 generateDocView :: (Node -> Maybe a) -> OrgDoc -> OrgDocView a
 generateDocView classifier doc =
   let childNode (ChildNode n) = Just n

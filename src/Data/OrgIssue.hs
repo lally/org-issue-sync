@@ -2,6 +2,7 @@
 -- TODO(lally): trim down these imports.
 module Data.OrgIssue where
 import Data.OrgMode
+import Data.OrgMode.Text
 import Data.Issue
 import Control.Monad
 import Control.Exception (handle)
@@ -107,76 +108,51 @@ getOrgIssue n =
        valOf "ISSUETYPE" draw) []
      else Nothing
 
-wrapLine :: Int -> TextLine -> [TextLine]
-wrapLine width (TextLine indent string linenum) =
-  let wrapLen _ [] = []
-      wrapLen len str
-        | length str < len = str
-        | otherwise =
-        let first_word = takeWhile (not . isSpace) str
-            is_first_too_long = length first_word >= len
-            max_width = reverse $ take len str
-            wrapped_back = if is_first_too_long
-                           then first_word
-                           else reverse $ dropWhile (not . isSpace) max_width
-            remain = drop (length wrapped_back) str
-        in if length wrapped_back > 0
-           then wrapped_back ++ "\n" ++ wrapLen len remain
-           else ""
-      desired_len = width - indent
-      strings = lines $ concatMap (wrapLen desired_len) $ lines string
-      line_nrs = linesStartingFrom linenum
-      makeTextLine (str, nr) = TextLine indent str nr
-  in map makeTextLine $ zip strings line_nrs
-
-prefixLine :: String -> TextLine -> TextLine
-prefixLine pfx (TextLine indent string linenum) =
-  let new_str = pfx ++ string
-      new_indent = length $ takeWhile isSpace new_str
-  in TextLine new_indent new_str linenum
+makeIssueLine :: Int -> LineNumber -> IssueEvent -> [NodeChild]
+makeIssueLine depth line_nr (IssueEvent when user details) =
+  let line = TextLine depth "" line_nr
+      linePrefix = (take depth $ repeat ' ')
+      eventPrefix s = linePrefix ++ "- <" ++
+                      (show when) ++ "> " ++
+                      user ++ ": " ++ s
+      eventLine s = line { tlText = eventPrefix s }
+      eventText s = ChildText $ eventLine s
+  in case details of
+    IssueStatusChange status -> [eventText (show status)]
+    IssueComment comment ->
+      let all_lines = wrapLine (78 - depth) (eventLine comment)
+          prefixedFirstLine = head all_lines
+          prefixedRemain =
+            map (prefixLine (linePrefix ++ "  ")) $ tail all_lines
+      in map ChildText (prefixedFirstLine:prefixedRemain)
+    IssueOwnerChange owner -> [eventText $ "New Owner: " ++ owner]
+    IssueLabelChange new old ->
+      [eventText $ prefix ++ middle ++ suffix]
+      where
+        prefix = if length new > 0
+                 then "New Labels: " ++ (intercalate "," new)
+                 else ""
+        suffix = if length old > 0
+                 then "Old Labels: " ++ (intercalate "," old)
+                 else ""
+        middle = if length old > 0 && length new > 0
+                 then ", "
+                 else ""
+    IssueMilestoneChange newms oldms ->
+      [eventText $ "Milestone " ++ old ++ " -> " ++ new]
+      where
+        fromMaybe :: String -> Maybe String -> String
+        fromMaybe s (Just t) = t
+        fromMaybe s Nothing = s
+        old = fromMaybe "(no prior milestone)" oldms
+        new = fromMaybe "(no new milestone)" newms
 
 makeIssueSubNode :: Int -> LineNumber -> Issue -> NodeChild
 makeIssueSubNode depth fst_line iss =
   let prefix = take depth $ repeat '*'
-      makeIssueLine :: LineNumber -> IssueEvent -> [NodeChild]
-      makeIssueLine line_nr (IssueEvent when user details) =
-        let line = TextLine depth "" line_nr
-            linePrefix = (take depth $ repeat ' ')
-            eventLine s = line { tlText = (linePrefix ++ "- " ++
-                                           (show when) ++ "/ " ++
-                                           user ++ ": " ++ s) }
-            eventText s = ChildText $ eventLine s
-        in case details of
-          IssueStatusChange status -> [eventText (show status)]
-          IssueComment comment ->
-            let lines = wrapLine (78 - depth) (eventLine comment)
-                prefixedFirstLine = head lines
-                prefixedRemain = map (prefixLine ("  ")) $ tail lines
-            in map ChildText (prefixedFirstLine:prefixedRemain)
-          IssueOwnerChange owner -> [eventText $ "New Owner: " ++ owner]
-          IssueLabelChange new old ->
-            [eventText $ prefix ++ middle ++ suffix]
-            where
-              prefix = if length new > 0
-                       then "New Labels: " ++ (intercalate "," new)
-                       else ""
-              suffix = if length old > 0
-                       then "Old Labels: " ++ (intercalate "," old)
-                       else ""
-              middle = if length old > 0 && length new > 0
-                       then ", "
-                       else ""
-          IssueMilestoneChange newms oldms ->
-            [eventText $ "Milestone " ++ old ++ " -> " ++ new]
-            where
-              fromMaybe :: String -> Maybe String -> String
-              fromMaybe s (Just t) = t
-              fromMaybe s Nothing = s
-              old = fromMaybe "(no prior milestone)" oldms
-              new = fromMaybe "(no new milestone)" newms
       issueStartingFrom _ [] = []
       issueStartingFrom line_nr (e:es) =
-        let cur_child = makeIssueLine line_nr e
+        let cur_child = makeIssueLine depth line_nr e
         in cur_child ++ (issueStartingFrom (mappend line_nr (Line $ length cur_child)) es)
       children = issueStartingFrom (mappend fst_line (Line 1)) $ events iss
   in ChildNode $ Node depth Nothing [] children "ISSUE EVENTS" (
@@ -250,7 +226,7 @@ getOrgIssues contents =
   in map fst $ ovElements $ generateDocView getOrgIssue doc
 
 -- * Issue Deltas
-
+{-
 data IssueChanges = IssueChanges
                     { newIssues :: [Issue]
                     , changes :: [(String, Int, [IssueDelta])]
@@ -281,3 +257,4 @@ getIssueDeltas prior cur =
       zipLookup vals k = (k, fromJust $ lookup k vals)
   in IssueChanges new  $ mapMaybe genDelta $ map (zipLookup curs) sames
 
+ -}

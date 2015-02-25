@@ -1,5 +1,6 @@
 module Sync.Retrieve.GoogleCode.Parse (parseIssueText) where
 
+import Data.OrgMode.Text
 import Text.HTML.TagSoup
 import Text.StringLike
 import Debug.Trace
@@ -137,7 +138,8 @@ parseIssueUpdate tags =
       parsed_date = parseTime defaultTimeLocale "%b %e, %Y" date_text
       when = maybe (UTCTime (ModifiedJulianDay 0) 0) id parsed_date
       user = innerText $ take 3 $ dropWhile (~/= "<a class=userlink") $ tags
-      comment = trim $ innerText $ take 4 $ dropWhile (~/= "<pre") tags
+      comment =
+        normalizeInputText $ trim $ innerText $ take 4 $ dropWhile (~/= "<pre") tags
       has_no_comment = no_comment == comment
       comment_result = if has_no_comment
                        then Nothing

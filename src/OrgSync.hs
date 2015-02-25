@@ -14,6 +14,7 @@ import System.FilePath.Glob
 import Debug.Trace
 import Control.Applicative
 import Data.OrgMode
+import Data.OrgMode.Text
 import Data.Issue
 import Data.OrgIssue
 import System.IO
