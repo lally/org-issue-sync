@@ -56,6 +56,9 @@ instance Ord Issue where
             else type_comp
        else num_comp
 
+instance Ord IssueEvent where
+  compare l r = compare (ieWhen l) (ieWhen r)
+
 instance Hashable Issue where
   hashWithSalt salt iss =
     (hashWithSalt salt $ origin iss) `xor` (
