@@ -113,7 +113,7 @@ wrapString len str
                        then first_word
                        else reverse $ dropWhile (not . isSpace) max_width
         remain = drop (length wrapped_back) str
-    in if length wrapped_back >= 0 && length remain > 0
+    in if length wrapped_back > 0 || length remain > 0
        then wrapped_back ++ "\n" ++ wrapString len remain
        else ""
 
