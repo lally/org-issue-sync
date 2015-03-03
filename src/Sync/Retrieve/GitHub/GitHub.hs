@@ -83,9 +83,9 @@ convertIssueComment comment =
       GD.githubOwnerLogin $ GD.issueCommentUser comment) (
       IssueComment (GD.issueCommentBody comment))]
 
-loadIssueComments :: String -> String -> Int -> IO [IssueEvent]
-loadIssueComments user repo num = do
-  res <- GIC.comments user repo num
+loadIssueComments :: Maybe GA.GithubAuth -> String -> String -> Int -> IO [IssueEvent]
+loadIssueComments oauth user repo num = do
+  res <- GIC.comments' oauth user repo num
   case res of
     Left err -> do
       putStrLn (user ++ "/" ++ repo ++ ": issue " ++ (
@@ -94,8 +94,8 @@ loadIssueComments user repo num = do
     Right comments ->
       return $ concatMap convertIssueComment comments
 
-loadIssueEvents :: String -> String -> GD.Issue -> IO [IssueEvent]
-loadIssueEvents user repo iss = do
+loadIssueEvents :: Maybe GA.GithubAuth -> String -> String -> GD.Issue -> IO [IssueEvent]
+loadIssueEvents oauth user repo iss = do
   res <- GIE.eventsForIssue user repo (GD.issueNumber iss)
   case res of
     Left err -> do
@@ -123,8 +123,9 @@ fetch tok user repo stat tags = do
       putStrLn $ show err
       return []
     Right issues -> do
-      eventList <- mapM (loadIssueEvents user repo) issues
-      commentList <- mapM (\i -> loadIssueComments user repo (GD.issueNumber i)) issues
+      eventList <- mapM (loadIssueEvents auth user repo) issues
+      commentList <-
+        mapM (\i -> loadIssueComments auth user repo (GD.issueNumber i)) issues
       let convertedIssues = map (convertIssue (user++"/"++repo)) issues
           zippedConversions = zip convertedIssues $ zip eventList commentList
       return $ map (\(i,(es,cs)) -> i { events = (sort es++cs) }) $ zippedConversions

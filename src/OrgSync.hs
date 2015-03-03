@@ -7,7 +7,7 @@ import qualified Data.Configurator.Types as DCT
 import qualified Data.Text as T
 import qualified Sync.Retrieve.GoogleCode.GoogleCode as GC
 import qualified Sync.Retrieve.GitHub.GitHub as GH
-
+import Control.Monad (join)
 import Data.List (nub, (\\), sort, sortBy, intersect, groupBy, intercalate, partition)
 import Data.Maybe
 import System.FilePath.Glob
@@ -33,6 +33,7 @@ data GitHubSource = GitHubSource
 data RunConfiguration = RunConfiguration
                         { rcScanFiles :: [FilePath]
                         , rcOutputFile :: FilePath
+                        , rcGitHubOAuth :: Maybe String
                         , rcGitHubSources :: [GitHubSource]
                         , rcGoogleCodeSources :: [GoogleCodeSource]
                         } deriving (Eq, Show)
@@ -126,10 +127,12 @@ loadConfig config = do
                                         return (Just $ concat files)
                         Nothing -> return Nothing
   output_file <- DC.lookup config "output_file"
+  github_oauth <- DC.lookup config "github.auth_token" :: IO (Maybe T.Text)
   let gh_list = loadGHSources configmap
       gc_list = loadGCSources configmap
       file_list = Just raw_file_list
-  return $ RunConfiguration <$> raw_file_list <*> output_file <*> (
+      gh_auth = fmap T.unpack github_oauth
+  return $ RunConfiguration <$> raw_file_list <*> output_file <*> (pure gh_auth) <*> (
     pure gh_list) <*> (pure gc_list)
 
 loadOrgIssues :: FilePath -> IO (OrgDocView Issue)
@@ -143,7 +146,10 @@ loadOrgIssues file = do
 
 describeConfiguration :: RunConfiguration -> IO ()
 describeConfiguration runcfg = do
-  let (RunConfiguration scan_files output github googlecode) = runcfg
+  let scan_files = rcScanFiles runcfg
+      output = rcOutputFile runcfg
+      github = rcGitHubSources runcfg
+      googlecode = rcGoogleCodeSources runcfg
       descGithub (GitHubSource user project tags) =
         let tagstr = if length tags > 0
                      then " with tags " ++ (intercalate ", " tags)
@@ -278,7 +284,7 @@ updateIssueFile issuelist = do
 
 loadIssuesFromConfiguration :: RunConfiguration -> IO [Issue]
 loadIssuesFromConfiguration runcfg = do
-  let (RunConfiguration orig_scan_files _ _ _) = runcfg
+  let orig_scan_files = rcScanFiles runcfg
       scan_files = nub orig_scan_files
   raw_existing_issues <- mapM loadIssueFile scan_files
   let docs = map ifDoc raw_existing_issues
@@ -286,10 +292,12 @@ loadIssuesFromConfiguration runcfg = do
   return issues
 
 fetchIssues runcfg verbose = do
-  let (RunConfiguration _ _ github googlecode) = runcfg
+  let github_auth = rcGitHubOAuth runcfg
+      github = rcGitHubSources runcfg
+      googlecode = rcGoogleCodeSources runcfg
   -- Load the issues from our sources
-  let loadGHSource (GitHubSource user project tags) =
-        GH.fetch Nothing user project (Just Open) tags
+  let loadGHSource oauth (GitHubSource user project tags) =
+        GH.fetch oauth user project (Just Open) tags
       loadGCSource (GoogleCodeSource repo terms) =
         GC.fetch repo terms
 
@@ -298,7 +306,7 @@ fetchIssues runcfg verbose = do
               " GitHub queries...")
     else return ()
 
-  gh_issues <- mapM loadGHSource github
+  gh_issues <- mapM (loadGHSource github_auth)  github
 
   if verbose
     then do putStrLn $ "Loading from " ++ (show $ length googlecode) ++ (
@@ -313,7 +321,10 @@ fetchIssues runcfg verbose = do
 runConfiguration :: RunConfiguration -> RunOptions -> IO ()
 runConfiguration runcfg options = do
   -- Scan all the existing files.
-  let (RunConfiguration orig_scan_files output github googlecode) = runcfg
+  let orig_scan_files = rcScanFiles runcfg
+      output = rcOutputFile runcfg
+      github = rcGitHubSources runcfg
+      googlecode = rcGoogleCodeSources runcfg
       (RunOptions fetch write verbose update) = options
       scan_files = nub orig_scan_files
 
