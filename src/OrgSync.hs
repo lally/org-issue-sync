@@ -5,6 +5,7 @@ import qualified Data.HashMap.Strict as HM
 import qualified Data.Configurator as DC
 import qualified Data.Configurator.Types as DCT
 import qualified Data.Text as T
+import qualified Data.Set as S
 import qualified Sync.Retrieve.GoogleCode.GoogleCode as GC
 import qualified Sync.Retrieve.GitHub.GitHub as GH
 import Control.Monad (join)
@@ -15,6 +16,7 @@ import Debug.Trace
 import Control.Applicative
 import Data.OrgMode
 import Data.OrgMode.Text
+import Data.OrgMode.OrgDocView
 import Data.Issue
 import Data.OrgIssue
 import System.IO
@@ -235,30 +237,12 @@ issueIndex ifile =
   map (\i -> (i, ifile)) $ getRawElements $ ifDoc ifile
 
 generateIssueFileText :: [(Issue, IssueFile)] -> String
+generateIssueFileText [] = ""
 generateIssueFileText issuelist =
-  let issues = map fst issuelist
-      file = snd $ head issuelist
-      nodeUpdater node =
-        case getOrgIssue node of
-          Just iss ->
-            if iss `elem` issues
-            then
-              let newiss = head $ dropWhile (/= iss) issues
-                  line = updateNodeLine newiss node
-              in line
-            else Nothing
-          Nothing -> Nothing
-      oldDoc = ovDocument $ ifDoc file
-      newNodes =
-        let nodes = map (updateNode nodeUpdater) $ odNodes $ oldDoc
-        in nodes
-      newDoc =
-        let doc = oldDoc { odNodes = newNodes }
-        in doc
-      newLines =
-        let lines = getTextLines newDoc
-        in lines
-  in (intercalate "\n" $ map tlText newLines) ++ "\n"
+  let issue_set = S.fromList $ map fst issuelist
+      orig_doc = ifDoc . snd . head $ issuelist
+      new_doc = updateDoc issue_set orig_doc
+  in (intercalate "\n" $ map tlText $ getTextLines new_doc) ++ "\n"
 
 -- | Swaps the Issues in in 'index' with those in 'issues'.  Those not
 -- used in the swap are returned as the first part of the pair, and

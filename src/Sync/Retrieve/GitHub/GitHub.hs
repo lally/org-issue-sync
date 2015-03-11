@@ -105,6 +105,15 @@ loadIssueEvents oauth user repo iss = do
     Right events ->
       return $ concatMap convertIssueEvent events
 
+makeIssueComment :: GD.Issue -> IssueEvent
+makeIssueComment issue =
+  let user = case GD.issueAssignee issue of
+        Nothing -> GD.issueUser issue
+        Just us -> us
+      userName = GD.githubOwnerLogin user
+      createDate = GD.fromGithubDate $ GD.issueCreatedAt issue
+  in IssueEvent createDate userName (IssueComment (maybe "" id (GD.issueBody issue)))
+
 fetch :: Maybe String -> String -> String -> Maybe IssueStatus -> [String] -> IO [Issue]
 fetch tok user repo stat tags = do
   let auth = case tok of
@@ -127,5 +136,8 @@ fetch tok user repo stat tags = do
       commentList <-
         mapM (\i -> loadIssueComments auth user repo (GD.issueNumber i)) issues
       let convertedIssues = map (convertIssue (user++"/"++repo)) issues
-          zippedConversions = zip convertedIssues $ zip eventList commentList
-      return $ map (\(i,(es,cs)) -> i { events = (sort es++cs) }) $ zippedConversions
+          comments = map makeIssueComment issues
+          conversions =
+            zip convertedIssues $ zip3 comments eventList commentList
+      return $
+        map (\(i,(comm,es,cs)) -> i { events = comm:(sort es++cs) }) conversions

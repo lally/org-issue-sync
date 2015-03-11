@@ -8,6 +8,8 @@ module Data.OrgMode (
 -- TODO(lally): only export the interesting things!
 
 import Data.OrgMode.Text
+import Data.OrgMode.Doc
+import Data.OrgMode.OrgDocView
 -- import Sync.Issue
 
 import Control.Monad
@@ -19,189 +21,6 @@ import Debug.Trace (trace)
 import Text.Parsec
 import Text.Regex.Posix
 import Text.StringTemplate
-
---
--- * Data Decls
---
-
-data Prefix = Prefix String deriving (Eq)
-
-data Drawer = Drawer
-              { drName :: String
-              , drProperties :: [(String, String)]
-              , drLines :: [TextLine]
-              } deriving (Eq)
-
--- |Just store the lines of the babel environment.
-data Babel = Babel [TextLine] deriving (Eq, Show)
-
-data Table = Table [TextLine] deriving (Eq, Show)
-
--- |The body of a node has different parts.  We can put tables here,
--- as well as Babel sections, later.
-data NodeChild = ChildText TextLine
-               | ChildDrawer Drawer
-               | ChildNode Node
-               | ChildBabel Babel
-               | ChildTable Table
-                 deriving (Eq)
-
-data Node = Node
-            { nDepth :: Int
-            , nPrefix :: Maybe Prefix
-            , nTags :: [String]
-            , nChildren :: [NodeChild]
-              -- ^ In reverse order during construction.
-            , nTopic :: String
-            , nLine :: TextLine
-            } deriving (Eq)
-
-data OrgFile = OrgFile { orgTitle :: String
-                       , orgProps :: [(String, String)]
-                       , orgNodes :: [Node]
-                       } deriving (Eq, Show)
-
-data OrgFileProperty = OrgFileProperty { fpName :: String
-                                       , fpValue :: String
-                                       } deriving (Eq, Show)
-
-data OrgFileElement = OrgTopProperty OrgFileProperty
-                    | OrgTopLevel { tlNode :: Node }
-                    deriving (Eq, Show)
-
--- | We have one of these per input line of the file.  Some of these
--- we just keep as the input text, in the TextLine (as they need
--- multi-line parsing to understand).
-data OrgLine = OrgText TextLine
-             | OrgHeader TextLine Node
-             | OrgDrawer TextLine
-             | OrgPragma TextLine OrgFileProperty
-             | OrgBabel TextLine
-             | OrgTable TextLine
-             deriving (Eq, Show)
-
--- ^ Backwards!
-data OrgElement = OrgElNode Node
-                | OrgElPragma OrgFileProperty
-                deriving (Eq, Show)
-
-data OrgDoc = OrgDoc
-              { -- odLines :: [OrgLine]
-                -- ^ Deprecated
-                odNodes :: [Node]
-              , odProperties :: [OrgFileProperty]
-              } deriving (Eq, Show)
-
--- | The document is a forest of Nodes, with properties.  The Node
--- Path is the currently-constructing tree of nodes.  The path is
--- sorted by 'nDepth', in descending order, with each element's parent
--- after it in the list.
-data OrgDocZipper = OrgDocZipper
-                     { ozNodePath :: [Node]
-                     , ozNodes :: [Node]
-                     , ozProperties :: [OrgFileProperty]
-                     } deriving (Eq, Show)
-
-data OrgDocView a = OrgDocView
-                    { ovElements :: [(a, Node)]
-                    , ovDocument :: OrgDoc
-                    } deriving (Show)
-
---
--- * Instance Decls
---
-instance Show Prefix where
-  show (Prefix s) = s
-instance Show Drawer where
-  show (Drawer name props _) =
-    "PP<<:" ++ name ++ ":\n"
-    ++ concatMap (\(k,v) -> ":" ++ k ++ ": " ++ v ++ "\n") props
-    ++ ":END:>>PP\n"
-
-instance Show NodeChild where
-  show (ChildText s) = show s
-  show (ChildDrawer d) = show d
-  show (ChildNode n) = show n
-  show (ChildBabel (Babel b)) = intercalate "\n" $ map show b
-  show (ChildTable (Table t)) = intercalate "\n" $ map show t
-
-instance TextLineSource NodeChild where
-  getTextLines (ChildText l) = [l]
-  getTextLines (ChildDrawer d) = drLines d
-  getTextLines (ChildNode n) = getTextLines n
-  getTextLines (ChildBabel (Babel lines)) = lines
-  getTextLines (ChildTable (Table lines)) = lines
-
-instance Show Node where
-  show (Node depth prefix tags children topic _) =
-    stars ++ " <" ++ pfx ++ "> " ++ topic ++ "<<" ++ tgs ++ ">>\n" ++ rest
-    where
-      stars = take depth $ repeat '*'
-      pfx = show prefix
-      tgs = if length tags > 0
-            then ":" ++ (intercalate ":" tags) ++ ":"
-            else ""
-      rest = intercalate "\n" $ map show children
-
-instance TextLineSource Node where
-  getTextLines node =
-    (nLine node) : (concatMap getTextLines $ nChildren node)
-
-instance TextLineSource OrgFileProperty where
-  getTextLines prop =
-    [TextLine 0 ("#+" ++ (fpName prop) ++ ": " ++ (fpValue prop)) NoLine]
-
-instance TextLineSource OrgLine where
-  getTextLines (OrgText t) = [t]
-  getTextLines (OrgHeader t _) = [t]
-  getTextLines (OrgDrawer t) = [t]
-  getTextLines (OrgPragma t _) = [t]
-  getTextLines (OrgBabel t) = [t]
-  getTextLines (OrgTable t) = [t]
-
-instance TextLineSource OrgDoc where
-  getTextLines doc =
-    let docLines = concatMap getTextLines $ odNodes doc
-        propLines = concatMap getTextLines $ odProperties doc
-        fixLine (l, nr) =
-          if hasNumber l
-          then l
-          else l { tlLineNum = nr }
-        -- Fix the document lines, but let any property lines
-        fixed_docLines =
-          map fixLine $ zip docLines $ map Line [1..]
-        unsorted_propLines = filter (not . hasNumber) propLines
-        sorted_propLines = filter hasNumber propLines
-    in unsorted_propLines ++ sort (fixed_docLines ++ sorted_propLines)
-
--- * Constructors
-generateDocView :: (Node -> Maybe a) -> OrgDoc -> OrgDocView a
-generateDocView classifier doc =
-  let childNode (ChildNode n) = Just n
-      childNode _ = Nothing
-      childNodes n = mapMaybe childNode $ nChildren n
-      scanNode :: (Node -> Maybe a) -> Node -> [(a, Node)]
-      scanNode fn n = let hd = fn n
-                          entry = maybe [] (\a -> [(a,n)]) hd
-                          rest = (concatMap (scanNode fn) $ childNodes n)
-                      in (entry++rest)
-      scanOrgForest :: (Node -> Maybe a) -> [Node] -> [(a, Node)]
-      scanOrgForest fn forest =
-        concatMap (scanNode fn) forest
-
-      forest = odNodes doc
-      elements = scanOrgForest classifier forest
-  in OrgDocView elements doc
-
-getRawElements :: OrgDocView a -> [a]
-getRawElements docview =
-  map fst $ ovElements docview
-
--- ** Utilities
-trim xs =
-  let rstrip xs = reverse $ lstrip $ reverse xs
-      lstrip = dropWhile (== ' ')
-  in lstrip $ rstrip xs
 
 -- ** Zipper Facilities
 
@@ -381,7 +200,8 @@ orgProperty = do string "#+"
 
 babelLine :: Parsec String TextLine OrgLine
 babelLine = do
-  (string "#+begin_src:") <|> (string "#+end_src") <|>  (string "#+BEGIN_SRC:") <|> (string "#+END_SRC")
+  (string "#+begin_src:") <|> (string "#+end_src") <|>
+    (string "#+BEGIN_SRC:") <|> (string "#+END_SRC")
   textLine <- getState
   return $ OrgBabel textLine
 
@@ -411,7 +231,8 @@ nodeLine = do
   many space
   topic <- manyTill anyChar (try $ lookAhead orgSuffix)
   let topic_words = words topic
-      first_word_is_prefix = length topic_words > 0 && (head topic_words `elem` validPrefixes)
+      first_word_is_prefix =
+        length topic_words > 0 && (head topic_words `elem` validPrefixes)
       prefix = if first_word_is_prefix
                  then Just $ Prefix $ head topic_words
                  else Nothing
@@ -462,25 +283,4 @@ parseLine lineno s = do
       line = TextLine indent s (Line lineno)
     in runParser classifyOrgLine line "input" (s ++ "\n")
 
--- * Update an OrgMode doc
-
--- Algorithm: sort the issues by textline line #.  Then, get the
--- textlines of the entire tree, which shall be in ascending order.
--- Replace them as we match the node.
-
--- | Generic visitor for updating a Node's values.
-class (Eq a) => NodeUpdate a where
-  updateNodeLine :: a -> Node -> Maybe Node
-
-updateNode :: (Node -> Maybe Node) -> Node -> Node
-updateNode fn root =
-  let top = case (fn root) of
-        Nothing -> root
-        Just t -> t
-      all_children = nChildren top
-      updateChild c =
-        case c of
-          (ChildNode n) -> ChildNode $ updateNode fn n
-          otherwise -> c
-  in top { nChildren = map updateChild $ all_children }
 

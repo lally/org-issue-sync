@@ -55,12 +55,11 @@ linesStartingFrom (Line l) = map Line [l..]
 -- | Raw data about each line of text.  Currently a bit hacked, with
 -- 'tlLineNum == 0' indicating a fake line.
 data TextLine = TextLine
-                { tlIndent :: Int  -- how long of a whitespace prefix is in tlText?
+                { tlIndent :: Int
+                  -- ^how long of a whitespace prefix is in tlText?
                 , tlText :: String
                 , tlLineNum :: LineNumber
                 } deriving (Eq)
-
-
 
 hasNumber :: TextLine -> Bool
 hasNumber (TextLine _ _ (Line _)) = True
@@ -71,8 +70,6 @@ instance Show TextLine where
 
 instance Ord TextLine where
   compare a b = compare (tlLineNum a) (tlLineNum b)
-
-
 
 -- | Currently a simple getter.  TODO(lally): extend with enough here
 -- to let us write out a modified .org file, preserving as much of the

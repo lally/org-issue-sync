@@ -159,8 +159,8 @@ makeIssueSubNode depth fst_line iss =
     TextLine 0 (prefix++" ISSUE EVENTS") fst_line)
 
 instance NodeUpdate Issue where
-  -- Fill in the Node, and generate a new TextLine for it.
-  -- This will get rather complicated later.
+  findItemInNode = getOrgIssue
+  -- Fill in the Node, and generate new TextLines for it.
   updateNodeLine iss node =
     case getOrgIssue node of
       Just old_iss ->
