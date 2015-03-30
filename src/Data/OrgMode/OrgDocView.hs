@@ -83,6 +83,8 @@ class (Eq a) => NodeUpdate a where
   findItemInNode :: Node -> Maybe a
   updateNodeLine :: a -> Node -> Maybe Node
 
+-- Assert when the resulting node from fn has line numbers!
+-- or, wipe them out
 updateNode :: (Node -> Maybe Node) -> Node -> Node
 updateNode fn root =
   let top = case (fn root) of

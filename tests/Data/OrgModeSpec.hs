@@ -32,13 +32,36 @@ instance Arbitrary TestNode where
     nd <- arbitrary
     return (TestNode nd)
 
+data FullyNumberedNode = FullyNumberedNode Node deriving (Eq)
+instance Show FullyNumberedNode where
+  show (FullyNumberedNode node) = intercalate "\n" $ map show $ getTextLines node
+
+instance Arbitrary FullyNumberedNode where
+  arbitrary = do
+    let lnfunc (Line x) = return (Line (x+1))
+    nd <- arbNode (Line 1) 1 lnfunc
+    return (FullyNumberedNode nd)
+
+data UnnumberedNode = UnnumberedNode Node deriving (Eq)
+instance Show UnnumberedNode where
+  show (UnnumberedNode node) = intercalate "\n" $ map show $ getTextLines node
+
+instance Arbitrary UnnumberedNode where
+  arbitrary = do
+    let lnfunc NoLine = return NoLine
+    nd <- arbNode NoLine 1 lnfunc
+    return (UnnumberedNode nd)
+
 spec :: Spec
 spec = do
   describe "nodes text generation" $ do
     prop "each TextLine is a single line" $ propLinesOfNodeAreSingular
     prop "line numbers are proper" $ propLinesOfNodeSemiSorted
+    prop "fully numbered nodes are fully numbered properly" $ propLinesOfNumberedNodeSorted
   describe "indents work right" $ do
     prop "indentation" $ propTextLineIndent
+  describe "update works right" $ do
+    prop "merge" $ propLinesMergeProperly
 
 -- | Test TextLineSource OrgDoc.  We should give it nodes that do and
 -- don't have line numbers, and correctly assemble them.
@@ -47,10 +70,36 @@ propLinesOfNodeSemiSorted :: TestNode -> Bool
 propLinesOfNodeSemiSorted (TestNode node) =
   linesSemiSorted (getTextLines node) == True
 
+propLinesOfNumberedNodeSorted :: FullyNumberedNode -> Bool
+propLinesOfNumberedNodeSorted (FullyNumberedNode node) =
+  linesSorted (getTextLines node) == True
+
 propLinesOfNodeAreSingular :: TestNode -> Bool
 propLinesOfNodeAreSingular (TestNode node) =
   let hasNoNewLines tl = all (/= '\n') $ tlText tl
   in all hasNoNewLines (getTextLines node) == True
+
+propLinesMergeProperly :: FullyNumberedNode -> UnnumberedNode -> Bool
+propLinesMergeProperly (FullyNumberedNode host) (UnnumberedNode guest) =
+  let isChildNode (ChildNode nd) = True
+      isChildNode _ = False
+      childNodes = filter isChildNode $ nChildren host
+      numChildNodes = length childNodes
+      firstChild =
+        let (ChildNode n) = head childNodes
+        in n
+      subChild :: Node -> Maybe Node
+      subChild inn
+        | inn == firstChild = Just guest
+        | otherwise = Nothing
+      merged = updateNode subChild host
+  in (numChildNodes < 1) || linesSemiSorted (getTextLines merged)
+
+linesSorted :: [TextLine] -> Bool
+linesSorted lines =
+  let numbers = map tlLineNum lines
+      sorted xs = xs == (sort xs)
+  in all isNumber numbers && sorted numbers
 
 lineNumbersSemiSorted :: [LineNumber] -> Bool
 lineNumbersSemiSorted [] = True
