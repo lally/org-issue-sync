@@ -1,7 +1,13 @@
-{-# LANGUAGE BangPatterns #-}
-module Data.OrgMode.Text where
+{-# LANGUAGE BangPatterns, GADTs, DeriveDataTypeable, StandaloneDeriving #-}
+
+module Data.OrgMode.Text (
+  LineNumber(..), toNumber, TextLine(..), isNumber, TextLineSource(..), normalizeInputText,
+  linesStartingFrom, hasNumber, makeDrawerLines, wrapLine, prefixLine
+  ) where
 
 import Data.Monoid
+import Data.Typeable
+import Data.Generics (Generic(..))
 import Data.Char (isSpace, toUpper, isPrint)
 
 -- | Line numbers, where we can have an unattached root.
@@ -19,6 +25,8 @@ toNumber :: Int -> LineNumber -> Int
 toNumber n NoLine = n
 toNumber _ (Line a) = a
 
+-- I don't know why I'd need this.
+-- TODO: Remove and then remove dependencies.
 instance Num LineNumber where
   (+) a b = mconcat [a, b]
   (*) NoLine a = a
@@ -38,6 +46,8 @@ instance Num LineNumber where
     | otherwise = Line 0
   fromInteger i = Line $ fromIntegral i
 
+-- This is almost certainly wrong. 
+-- TODO: Remove and then remove dependencies.
 instance Ord LineNumber where
   compare NoLine NoLine = EQ
   compare NoLine (Line _) = LT
@@ -59,14 +69,14 @@ data TextLine = TextLine
                   -- ^how long of a whitespace prefix is in tlText?
                 , tlText :: String
                 , tlLineNum :: LineNumber
-                } deriving (Eq)
+                } deriving (Eq, Typeable)
 
 hasNumber :: TextLine -> Bool
 hasNumber (TextLine _ _ (Line _)) = True
 hasNumber _ = False
 
 instance Show TextLine where
-  show tl = (show $tlLineNum tl) ++ ":" ++ (tlText tl)
+  show tl = "<" ++ (show $tlLineNum tl) ++ ":" ++ (tlText tl) ++ ">"
 
 instance Ord TextLine where
   compare a b = compare (tlLineNum a) (tlLineNum b)
@@ -141,4 +151,5 @@ makeDrawerLines fstLine depth name props =
         TextLine depth (indent ++ ":" ++ prop ++ ": " ++ value) (mappend fstLine $ Line nr)
       proplines = map makePropLine $ zip props [1..]
   in (headline:(proplines)) ++ [lastline]
+
 

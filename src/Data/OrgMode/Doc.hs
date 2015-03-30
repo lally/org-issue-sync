@@ -16,8 +16,8 @@ data Drawer = Drawer
               } deriving (Eq)
 
 -- |Just store the lines of the babel environment.
-data Babel = Babel [TextLine] deriving (Eq, Show)
-data Table = Table [TextLine] deriving (Eq, Show)
+data Babel = Babel [TextLine] deriving (Eq)
+data Table = Table [TextLine] deriving (Eq)
 
 -- |The body of a node has different parts.  We can put tables here,
 -- as well as Babel sections, later.
@@ -44,11 +44,11 @@ data OrgFileProperty = OrgFileProperty { fpName :: String
 data OrgFile = OrgFile { orgTitle :: String
                        , orgProps :: [(String, String)]
                        , orgNodes :: [Node]
-                       } deriving (Eq, Show)
+                       } deriving (Eq)
 
 data OrgFileElement = OrgTopProperty OrgFileProperty
                     | OrgTopLevel { tlNode :: Node }
-                    deriving (Eq, Show)
+                    deriving (Eq)
 
 -- | We have one of these per input line of the file.  Some of these
 -- we just keep as the input text, in the TextLine (as they need
@@ -59,34 +59,20 @@ data OrgLine = OrgText TextLine
              | OrgPragma TextLine OrgFileProperty
              | OrgBabel TextLine
              | OrgTable TextLine
-             deriving (Eq, Show)
+             deriving (Eq)
 
 -- ^ Backwards!
 data OrgElement = OrgElNode Node
                 | OrgElPragma OrgFileProperty
-                deriving (Eq, Show)
+                deriving (Eq)
 
 data OrgDoc = OrgDoc
               { odNodes :: [Node]
               , odProperties :: [OrgFileProperty]
-              } deriving (Eq, Show)
+              } deriving (Eq)
 --
 -- * Instance Decls
 --
-instance Show Prefix where
-  show (Prefix s) = s
-instance Show Drawer where
-  show (Drawer name props _) =
-    ":" ++ name ++ ":\n"
-    ++ concatMap (\(k,v) -> ":" ++ k ++ ": " ++ v ++ "\n") props
-    ++ ":END:\n"
-
-instance Show NodeChild where
-  show (ChildText s) = show s
-  show (ChildDrawer d) = show d
-  show (ChildNode n) = show n
-  show (ChildBabel (Babel b)) = intercalate "\n" $ map show b
-  show (ChildTable (Table t)) = intercalate "\n" $ map show t
 
 instance TextLineSource NodeChild where
   getTextLines (ChildText l) = [l]
@@ -94,17 +80,6 @@ instance TextLineSource NodeChild where
   getTextLines (ChildNode n) = getTextLines n
   getTextLines (ChildBabel (Babel lines)) = lines
   getTextLines (ChildTable (Table lines)) = lines
-
-instance Show Node where
-  show (Node depth prefix tags children topic _) =
-    stars ++ " " ++ pfx ++ " " ++ topic ++ " " ++ tgs ++ "\n" ++ rest
-    where
-      stars = take depth $ repeat '*'
-      pfx = show prefix
-      tgs = if length tags > 0
-            then ":" ++ (intercalate ":" tags) ++ ":"
-            else ""
-      rest = intercalate "\n" $ map show children
 
 instance TextLineSource Node where
   getTextLines node =
@@ -128,3 +103,14 @@ trim xs =
       lstrip = dropWhile (== ' ')
   in lstrip $ rstrip xs
 
+makeNodeLine :: Node -> String
+makeNodeLine (Node depth prefix tags children topic _) =
+  stars ++ " " ++ pfx ++ topic ++ " " ++ tgs
+  where
+    stars = take depth $ repeat '*'
+    pfx = case prefix of
+      Just (Prefix s) -> (s ++ " ")
+      Nothing -> ""
+    tgs = if length tags > 0
+          then ":" ++ (intercalate ":" tags) ++ ":"
+          else ""

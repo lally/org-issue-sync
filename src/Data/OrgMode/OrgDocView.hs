@@ -1,4 +1,3 @@
-
 module Data.OrgMode.OrgDocView (
   OrgDocZipper(..), OrgDocView(..), generateDocView, getRawElements,
   updateNode, updateDoc, NodeUpdate(..)
@@ -18,12 +17,12 @@ data OrgDocZipper = OrgDocZipper
                      { ozNodePath :: [Node]
                      , ozNodes :: [Node]
                      , ozProperties :: [OrgFileProperty]
-                     } deriving (Eq, Show)
+                     } deriving (Eq)
 
 data OrgDocView a = OrgDocView
                     { ovElements :: [(a, Node)]
                     , ovDocument :: OrgDoc
-                    } deriving (Show)
+                    }
 
 -- Doesn't assume that xs or ys are individually sorted, which works
 -- well for TextLines with no line number mid-stream.
@@ -107,7 +106,6 @@ updateElementList nodes =
           Nothing -> children
       nodeChildScan (ChildNode nd) = nodeScan nd
       nodeChildScan _ = []
-      
   in concatMap nodeScan nodes
 
 updateDoc :: (Ord a, NodeUpdate a) => Set a -> OrgDocView a -> OrgDocView a
@@ -116,11 +114,12 @@ updateDoc new_items doc =
         case findItemInNode node of
           Just item ->
             if member item new_items
-            then
-              let new_item = fromJust $ lookupLE item new_items
-              in updateNodeLine new_item node
+            then let new_item = fromJust $ lookupLE item new_items
+                 in updateNodeLine new_item node
             else Nothing
           Nothing -> Nothing
-      new_nodes = map (updateNode nodeUpdater) $ odNodes $ ovDocument doc
+      new_nodes =
+        map (updateNode nodeUpdater) $ odNodes $ ovDocument doc
       new_doc = (ovDocument doc) { odNodes = new_nodes }
   in doc { ovDocument = new_doc }
+

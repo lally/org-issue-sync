@@ -2,8 +2,10 @@
 module Data.OrgMode (
   Prefix(..), Drawer(..), Babel(..), Table(..), NodeChild(..), Node(..),
   OrgFile(..), OrgFileProperty(..), OrgFileElement(..),
-  OrgDocView(..), NodeUpdate(..), OrgDoc(..),
-  orgFile, generateDocView, getRawElements, updateNode
+  OrgDocView(..), NodeUpdate(..), OrgDoc(..), TextLine(..), LineNumber(..),
+  TextLineSource(..),
+  toNumber, isNumber, linesStartingFrom, hasNumber, makeDrawerLines,
+  orgFile, generateDocView, getRawElements, updateNode, makeNodeLine
   ) where
 -- TODO(lally): only export the interesting things!
 
@@ -43,6 +45,8 @@ closeZipPath doczip@(OrgDocZipper path nodes properties) =
   doczip { ozNodePath = [],
            ozNodes = nodes ++ (appendChildrenUpPathToDepth (-1) path) }
 
+-- | Adds a pre-classified OrgLine to an OrgDocZipper, possibly adding
+-- it to some existing part of the OrgDocZipper.
 addOrgLine :: OrgDocZipper -> OrgLine -> OrgDocZipper
 -- First, the simple base case.  Creates a pseudo-root for unattached
 -- lines, and inserts the first node into the path.  There can only be
@@ -58,6 +62,7 @@ addOrgLine doczip@(OrgDocZipper []  nodes properties) orgline =
     (OrgBabel line) -> pseudRootWithChild $ ChildBabel $ Babel [line]
     (OrgTable line) ->  pseudRootWithChild $ ChildTable $ Table [line]
 
+-- TODO(lally): Add a few args and split out all these inner functions!
 addOrgLine doczip@(OrgDocZipper path@(pn:pns) nodes props) orgline =
   let -- addDrawer should parse as it goes.  But, we have the problem of :END:
       -- followed with more properties.  We can detect this, expensively, by
