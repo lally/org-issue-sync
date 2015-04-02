@@ -2,13 +2,16 @@
 
 module Data.OrgMode.Text (
   LineNumber(..), toNumber, TextLine(..), isNumber, TextLineSource(..), normalizeInputText,
-  linesStartingFrom, hasNumber, makeDrawerLines, wrapLine, prefixLine
+  linesStartingFrom, hasNumber, makeDrawerLines, wrapLine, prefixLine, tlPrint, tlFormat
   ) where
 
+import Data.List (intercalate)
 import Data.Monoid
 import Data.Typeable
 import Data.Generics (Generic(..))
 import Data.Char (isSpace, toUpper, isPrint)
+import Text.Printf
+import System.IO
 
 -- | Line numbers, where we can have an unattached root.
 data LineNumber = NoLine
@@ -152,4 +155,13 @@ makeDrawerLines fstLine depth name props =
       proplines = map makePropLine $ zip props [1..]
   in (headline:(proplines)) ++ [lastline]
 
+tlFormat :: (TextLineSource s) => s -> String
+tlFormat s =
+  let lines = getTextLines s
+      formatLine tl =
+        (printf "[%3d] " (tlIndent tl)) ++
+        (printf "%-18s" $ (show $ tlLineNum tl)) ++ "|" ++ (tlText tl)
+  in intercalate "\n" $ map formatLine lines
 
+tlPrint :: (TextLineSource s) => s -> IO ()
+tlPrint s = putStrLn $ tlFormat s

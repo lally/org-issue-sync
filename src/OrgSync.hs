@@ -275,7 +275,10 @@ generateIssueFileText issuelist verbose =
                    Left err -> "[E:" ++ show err
                    Right line -> showType line
              in linenr ++ "\t [" ++ ty ++ "] %" ++ (tlText tl)
-        else "%" ++ tlText tl
+        else tlText tl
+      allLines = getTextLines new_doc
+      allOldLines = getTextLines orig_doc
+      sl = show . length
   in (intercalate "\n" $ map describeLine $ getTextLines new_doc) ++ "\n"
 
 -- | Swaps the Issues in in 'index' with those in 'issues'.  Those not

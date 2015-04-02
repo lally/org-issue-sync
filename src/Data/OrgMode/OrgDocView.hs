@@ -37,8 +37,8 @@ class (Eq a) => NodeUpdate a where
 -- well for TextLines with no line number mid-stream.
 mergeSorted :: (Ord a) => [a] -> [a] -> [a]
 mergeSorted [] [] = []
-mergeSorted xs [] = []
-mergeSorted [] ys = []
+mergeSorted xs [] = xs
+mergeSorted [] ys = ys
 mergeSorted xl@(x:xs) yl@(y:ys) =
   case compare x y of
     EQ -> x:(mergeSorted xs yl)

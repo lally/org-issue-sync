@@ -157,24 +157,47 @@ makeIssueSubNode depth fst_line iss =
         in cur_child ++ (issueStartingFrom (mappend line_nr (Line $ length cur_child)) es)
       children = issueStartingFrom (mappend fst_line (Line 1)) $ events iss
   in ChildNode $ Node depth Nothing [] children "ISSUE EVENTS" (
-    TextLine 0 (prefix++" ISSUE EVENTS") fst_line)
+    TextLine depth (prefix++" ISSUE EVENTS") fst_line)
+
+isGeneratedChild (ChildNode nd) = nTopic nd == "ISSUE EVENTS"
+isGeneratedChild _ = False
+
+findSafeChildInsertion node =
+  let wouldBecomeChild (ChildNode nd) = nDepth nd > (1 + nDepth node)
+      wouldBecomeChild _ = True
+  in length $ filter wouldBecomeChild $ nChildren node
+
+origChildIndex :: [NodeChild] -> Maybe Int
+origChildIndex children =
+  let indices = findIndices isGeneratedChild children
+  in if length indices > 0
+     then Just $ head indices
+     else Nothing
+
+finalChildIndex node children =
+  let origIdx = origChildIndex children
+      safePoint = findSafeChildInsertion node
+  in maybe safePoint (\o -> max o safePoint) origIdx
+
+replaceAtIndex :: a -> Int -> [a] -> [a]
+replaceAtIndex c n [] = [c]
+replaceAtIndex c n lst@(x:xs)
+  | n > 0 = x:(replaceAtIndex c (n-1) xs)
+  | n == 0 = c:xs
+  | otherwise = lst ++ [c]
 
 updateOrgIssueNodeLine iss node =
-  let isGeneratedChild (ChildNode nd) = nTopic nd == "ISSUE EVENTS"
-      isGeneratedChild _ = False
-      genChildIndex children =
-        let indices = findIndices isGeneratedChild children
-        in if length indices > 0
-           then head indices
-           else (-1)
-      replaceAtIndex c n lst@(x:xs)
-        | n > 0 = x:(replaceAtIndex c (n-1) xs)
-        | n == 0 = c:xs
-        | otherwise = lst ++ [c]
-      -- puts the new ISSUE EVENTS child |cld| in place of the old
+  -- Put ISSUE EVENTS after any children that would otherwise fall
+  -- underneath this new node.  That is, any nodes of depth (parent
+  -- +2) or more, or any non-node children.
+  -- Put the child at the greater of:
+  -- - The first place where it wouldn't eat other children in a re-parse
+  -- - The old index.
+  let -- puts the new ISSUE EVENTS child |chld| in place of the old
       -- one, or at the end if we didn't find one.
       updateChild chld children =
-        replaceAtIndex chld (genChildIndex children) children
+        replaceAtIndex chld (finalChildIndex node children) $
+        filter (not . isGeneratedChild) children
       preservedTags tags = filter (elem '@') tags
       statusPrefix = Just $ Prefix $ map toUpper (issueStatus $ status iss)
   in case getOrgIssue node of
