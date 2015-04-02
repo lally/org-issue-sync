@@ -61,11 +61,26 @@ spec = do
       propLinesOfNumberedNodeSorted
   describe "indents work right" $ do
     prop "indentation" $ propTextLineIndent
+  describe "parsing works right" $ do
+    prop "parse generates same text as original" $ propReparsedNodeSemiSorted 
   describe "update works right" $ do
     prop "merge" $ propLinesMergeProperly
 
 -- | Test TextLineSource OrgDoc.  We should give it nodes that do and
 -- don't have line numbers, and correctly assemble them.
+
+propReparsedNodeSemiSorted :: TestNode -> Bool
+propReparsedNodeSemiSorted (TestNode node) =
+  let lineCompare a b = tlText a == tlText b
+      compareLines [] [] = True
+      compareLines (a:as) [] = False
+      compareLines [] (b:bs) = False
+      compareLines (a:as) (b:bs) =
+        (lineCompare a b) && (compareLines as bs)
+      linesOfNode = getTextLines node
+      linesOfParsed = getTextLines $ orgFile $
+                      (intercalate "\n" $ map tlText linesOfNode) ++ "\n"
+  in compareLines linesOfNode linesOfParsed
 
 propLinesOfNodeSemiSorted :: TestNode -> Bool
 propLinesOfNodeSemiSorted (TestNode node) =
