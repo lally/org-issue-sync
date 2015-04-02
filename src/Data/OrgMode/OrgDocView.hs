@@ -1,6 +1,6 @@
 module Data.OrgMode.OrgDocView (
   OrgDocZipper(..), OrgDocView(..), generateDocView, getRawElements,
-  updateNode, updateDoc, NodeUpdate(..)
+  updateDoc, NodeUpdate(..)
   ) where
 
 import Data.OrgMode.Doc
@@ -24,6 +24,15 @@ data OrgDocView a = OrgDocView
                     , ovDocument :: OrgDoc
                     }
 
+-- | Generic visitor for updating a Node's values.  Intentionally, we
+-- don't allow node deletion, just update.  Preferably, if you want to
+-- delete a Node, you should control the parent.  We also have
+-- findItemInNode which will construct an 'a' from the Node, which we
+-- may then update against a list.
+class (Eq a) => NodeUpdate a where
+  findItemInNode :: Node -> Maybe a
+  updateNodeLine :: a -> Node -> Maybe Node
+
 -- Doesn't assume that xs or ys are individually sorted, which works
 -- well for TextLines with no line number mid-stream.
 mergeSorted :: (Ord a) => [a] -> [a] -> [a]
@@ -46,8 +55,8 @@ instance TextLineSource (OrgDocView a)  where
   getTextLines = getTextLines . ovDocument
 
 -- * Constructors
-generateDocView :: (Node -> Maybe a) -> OrgDoc -> OrgDocView a
-generateDocView classifier doc =
+generateDocView :: (NodeUpdate a) => OrgDoc -> OrgDocView a
+generateDocView doc =
   let childNode (ChildNode n) = Just n
       childNode _ = Nothing
       childNodes n = mapMaybe childNode $ nChildren n
@@ -56,12 +65,12 @@ generateDocView classifier doc =
                           entry = maybe [] (\a -> [(a,n)]) hd
                           rest = (concatMap (scanNode fn) $ childNodes n)
                       in (entry++rest)
-      scanOrgForest :: (Node -> Maybe a) -> [Node] -> [(a, Node)]
-      scanOrgForest fn forest =
-        concatMap (scanNode fn) forest
+      scanOrgForest :: (NodeUpdate a) => [Node] -> [(a, Node)]
+      scanOrgForest forest =
+        concatMap (scanNode findItemInNode) forest
 
       forest = odNodes doc
-      elements = scanOrgForest classifier forest
+      elements = scanOrgForest forest
   in OrgDocView elements doc
 
 getRawElements :: OrgDocView a -> [a]
@@ -74,40 +83,15 @@ getRawElements docview =
 -- textlines of the entire tree, which shall be in ascending order.
 -- Replace them as we match the node.
 
--- | Generic visitor for updating a Node's values.  Intentionally, we
--- don't allow node deletion, just update.  Preferably, if you want to
--- delete a Node, you should control the parent.  We also have
--- findItemInNode which will construct an 'a' from the Node, which we
--- may then update against a list.
-class (Eq a) => NodeUpdate a where
-  findItemInNode :: Node -> Maybe a
-  updateNodeLine :: a -> Node -> Maybe Node
-
--- Assert when the resulting node from fn has line numbers!
--- or, wipe them out
-updateNode :: (Node -> Maybe Node) -> Node -> Node
-updateNode fn root =
-  let top = case (fn root) of
-        Nothing -> root
-        Just t -> t
-      all_children = nChildren top
-      updateChild c =
-        case c of
-          (ChildNode n) -> ChildNode $ updateNode fn n
-          otherwise -> c
-  in top { nChildren = map updateChild $ all_children }
-
 updateElementList :: (NodeUpdate a) => [Node] -> [(a, Node)]
 updateElementList nodes =
-  let nodeScan nd =
-        let nd_item :: (NodeUpdate b) => Maybe b
-            nd_item = findItemInNode nd
-            children = concatMap nodeChildScan (nChildren nd)
+  let nodeChildScan (ChildNode nd) = nodeScan nd
+      nodeChildScan _ = []
+      nodeScan nd =
+        let children = concatMap nodeChildScan (nChildren nd)
         in case findItemInNode nd of
           Just item -> (item, nd):children
           Nothing -> children
-      nodeChildScan (ChildNode nd) = nodeScan nd
-      nodeChildScan _ = []
   in concatMap nodeScan nodes
 
 updateDoc :: (Ord a, NodeUpdate a) => Set a -> OrgDocView a -> OrgDocView a

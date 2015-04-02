@@ -1,9 +1,13 @@
+{-# LANGUAGE ScopedTypeVariables #-}
 module Sync.Retrieve.GitHub.GitHub where
+import Control.Exception
 import Data.Issue
 import Data.Maybe
 import Data.Char
 import Data.List (sort)
 import Debug.Trace
+import Network.HTTP.Conduit (HttpException(..))
+import Network.HTTP.Types (statusCode, statusMessage)
 import qualified Github.Auth as GA
 import qualified Github.Issues as GI
 import qualified Github.Issues.Events as GIE
@@ -96,11 +100,18 @@ loadIssueComments oauth user repo num = do
 
 loadIssueEvents :: Maybe GA.GithubAuth -> String -> String -> GD.Issue -> IO [IssueEvent]
 loadIssueEvents oauth user repo iss = do
+  let classifyError (GD.HTTPConnectionError ex) =
+        case (fromException ex) of
+          Just (StatusCodeException st _ _) -> "HTTP Connection Error " ++
+                                               show (statusCode st) ++ ": " ++
+                                               show (statusMessage st)
+          _ -> "HTTP Connection Error (unknown status code): " ++ show ex
+      classifyError err = show err
   res <- GIE.eventsForIssue user repo (GD.issueNumber iss)
   case res of
     Left err -> do
       putStrLn (user ++ "/" ++ repo ++ ": issue " ++ (
-                   show $ GD.issueNumber iss) ++ ": " ++ show err)
+                   show $ GD.issueNumber iss) ++ ": " ++ classifyError err)
       return []
     Right events ->
       return $ concatMap convertIssueEvent events

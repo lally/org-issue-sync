@@ -114,3 +114,15 @@ makeNodeLine (Node depth prefix tags children topic _) =
     tgs = if length tags > 0
           then ":" ++ (intercalate ":" tags) ++ ":"
           else ""
+
+updateNode :: (Node -> Maybe Node) -> Node -> Node
+updateNode fn root =
+  let top = case (fn root) of
+        Nothing -> root
+        Just t -> t
+      all_children = nChildren top
+      updateChild c =
+        case c of
+          (ChildNode n) -> ChildNode $ updateNode fn n
+          otherwise -> c
+  in top { nChildren = map updateChild $ all_children }

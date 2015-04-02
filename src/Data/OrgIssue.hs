@@ -3,9 +3,10 @@
 module Data.OrgIssue where
 import Data.OrgMode
 import Data.OrgMode.Text
+import Data.Either (isLeft)
 import Data.Issue
 import Control.Monad
-import Control.Exception (handle)
+import Control.Exception (handle, assert)
 import Data.Char (toUpper, isAlphaNum, isSpace)
 import Data.List
 import Data.Maybe (mapMaybe, fromJust, catMaybes, isJust)
@@ -46,7 +47,6 @@ makeIssueOrgDrawer fstLine depth issue =
         ("ISSUETYPE", iType issue)]
   in makeDrawerLines fstLine depth "PROPERTIES" props
 
--- Dumb v0.1: just splat issues at the end of files.
 makeIssueOrgNode :: LineNumber -> Int -> Issue -> String
 makeIssueOrgNode fstLine depth issue =
   let indent = take depth $ repeat ' '
@@ -60,6 +60,7 @@ makeIssueOrgNode fstLine depth issue =
       node_text = [tlText $ heading] ++ (map tlText body)
   in unlines $ node_text
 
+-- Dumb v0.1: just splat issues at the end of files.
 appendIssues :: FilePath -> [Issue] -> IO ()
 appendIssues file issues = do
   let headings = intercalate "\n" $ map (makeIssueOrgNode NoLine 2) issues
@@ -158,42 +159,43 @@ makeIssueSubNode depth fst_line iss =
   in ChildNode $ Node depth Nothing [] children "ISSUE EVENTS" (
     TextLine 0 (prefix++" ISSUE EVENTS") fst_line)
 
+updateOrgIssueNodeLine iss node =
+  let isGeneratedChild (ChildNode nd) = nTopic nd == "ISSUE EVENTS"
+      isGeneratedChild _ = False
+      genChildIndex children =
+        let indices = findIndices isGeneratedChild children
+        in if length indices > 0
+           then head indices
+           else (-1)
+      replaceAtIndex c n lst@(x:xs)
+        | n > 0 = x:(replaceAtIndex c (n-1) xs)
+        | n == 0 = c:xs
+        | otherwise = lst ++ [c]
+      -- puts the new ISSUE EVENTS child |cld| in place of the old
+      -- one, or at the end if we didn't find one.
+      updateChild chld children =
+        replaceAtIndex chld (genChildIndex children) children
+      preservedTags tags = filter (elem '@') tags
+      statusPrefix = Just $ Prefix $ map toUpper (issueStatus $ status iss)
+  in case getOrgIssue node of
+    Just old_iss ->
+      if old_iss == iss
+      then let new_iss = iss { tags = (tags iss) ++ (preservedTags $ nTags node) }
+               heading = makeIssueOrgHeading NoLine (nDepth node) new_iss
+               childNode = makeIssueSubNode (1 + nDepth node) NoLine iss
+               new_node = node { nLine = heading
+                               , nPrefix = statusPrefix
+                               , nTags = tags new_iss
+                               , nTopic = summary iss
+                               , nChildren = updateChild childNode (nChildren node) }
+           in Just new_node
+      else Nothing
+    Nothing -> Nothing
+
 instance NodeUpdate Issue where
   findItemInNode = getOrgIssue
   -- Fill in the Node, and generate new TextLines for it.
-  updateNodeLine iss node =
-    case getOrgIssue node of
-      Just old_iss ->
-        if old_iss == iss
-        then let old_line = head $ getTextLines node
-                 preserved_tags =
-                   let allTags = nTags node
-                       pres = filter (elem '@') allTags
-                   in pres
-                 new_iss = iss { tags = (tags iss) ++ preserved_tags }
-                 heading = makeIssueOrgHeading (tlLineNum old_line) (
-                   nDepth node) new_iss
-                 isGeneratedChild (ChildNode nd) = nTopic nd == "ISSUE EVENTS"
-                 isGeneratedChild _ = False
-                 oldChildNode = filter isGeneratedChild $ nChildren node
-                 oldChildNodeLineNr =
-                   if length oldChildNode > 0
-                   then tlLineNum . head . getTextLines . head $ oldChildNode
-                   else NoLine
-                 regularChildren =
-                   filter (not . isGeneratedChild) $ nChildren node
-                 childNode =
-                   makeIssueSubNode (1 + nDepth node) oldChildNodeLineNr iss
-                 new_node = node { nLine = heading
-                                 , nPrefix =
-                                   Just $ Prefix $ map toUpper (
-                                     issueStatus $ status iss)
-                                 , nTags = (tags iss) ++ preserved_tags
-                                 , nTopic = summary iss
-                                 , nChildren = childNode:regularChildren }
-             in Just new_node
-        else Nothing
-      Nothing -> Nothing
+  updateNodeLine = updateOrgIssueNodeLine
 
 -- |Pull special properties from the argument Node, and generate a new
 -- TextLine to replace the header line of that Node, representing this
@@ -223,38 +225,4 @@ updateNodeIssue iss nd =
 getOrgIssues :: String -> [Issue]
 getOrgIssues contents =
   let doc = orgFile contents
-  in map fst $ ovElements $ generateDocView getOrgIssue doc
-
--- * Issue Deltas
-{-
-data IssueChanges = IssueChanges
-                    { newIssues :: [Issue]
-                    , changes :: [(String, Int, [IssueDelta])]
-                    } deriving (Eq)
-
-instance Show IssueChanges where
-  show (IssueChanges new changed) =
-    let summary iss = origin iss ++ "#" ++ (show $ number iss)
-        showChg (a, b, _) = a ++ "#" ++ (show b)
-        firstHeader = (show $ length new) ++ " new issues: \n   "
-        firstBody = intercalate "\n   " $ map summary new
-        numChanged = show $ length changed
-        secondHeader = "\nAnd " ++ numChanged ++ " issues changed: \n   "
-        secondBody = intercalate "\n   " $ map showChg changed
-    in  firstHeader ++ firstBody ++ secondHeader ++ secondBody
-
-getIssueDeltas :: [Issue] -> [Issue] -> IssueChanges
-getIssueDeltas prior cur =
-  let priors = zip prior prior
-      curs = zip cur cur
-      sames = intersect prior cur
-      new = cur \\ prior
-      genDelta (p,c) =
-        let changes = issueDelta p c
-        in if length changes > 0
-           then Just (origin p, number p, changes)
-           else Nothing
-      zipLookup vals k = (k, fromJust $ lookup k vals)
-  in IssueChanges new  $ mapMaybe genDelta $ map (zipLookup curs) sames
-
- -}
+  in map fst $ ovElements $ generateDocView doc

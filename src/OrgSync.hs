@@ -8,6 +8,7 @@ import qualified Data.Text as T
 import qualified Data.Set as S
 import qualified Sync.Retrieve.GoogleCode.GoogleCode as GC
 import qualified Sync.Retrieve.GitHub.GitHub as GH
+--import Control.Exception.Base (handle)
 import Control.Monad (join)
 import Data.List (nub, (\\), sort, sortBy, intersect, groupBy, intercalate, partition)
 import Data.Maybe
@@ -16,10 +17,12 @@ import Debug.Trace
 import Control.Applicative
 import Data.OrgMode
 import Data.OrgMode.Text
+import Data.OrgMode.Doc
 import Data.OrgMode.OrgDocView
 import Data.Issue
 import Data.OrgIssue
 import System.IO
+import System.IO.Error
 
 data GoogleCodeSource = GoogleCodeSource
                         { gcRepo :: String
@@ -137,13 +140,13 @@ loadConfig config = do
   return $ RunConfiguration <$> raw_file_list <*> output_file <*> (pure gh_auth) <*> (
     pure gh_list) <*> (pure gc_list)
 
-loadOrgIssues :: FilePath -> IO (OrgDocView Issue)
+loadOrgIssues :: (NodeUpdate a) => FilePath -> IO (OrgDocView a)
 loadOrgIssues file = do
   fh <- openFile file ReadMode
   fileText <- hGetContents fh
   let !len = length fileText
       doc = orgFile fileText
-      view = generateDocView getOrgIssue doc
+      view = generateDocView doc
   return view
 
 describeConfiguration :: RunConfiguration -> IO ()
@@ -167,7 +170,7 @@ describeConfiguration runcfg = do
     then do putStrLn $ "Will scan GitHub for these projects:\n\t" ++ (
               intercalate "\n\t" $ map descGithub github)
     else return ()
-  if length github > 0
+  if length googlecode > 0
     then do putStrLn $ "Will scan Google Code for these projects:\n\t" ++ (
               intercalate "\n\t" $ map descGoogleCode googlecode)
     else return ()
@@ -186,7 +189,20 @@ categorize issues =
 -- get terminal width, etc.
 printIssues :: [(String, [(String, [Issue])])] -> String
 printIssues issues =
-  let printSingleIssue s = show $ number s
+  let -- (type, [(repo, issue)]
+      sortByFirsts :: (Ord a) => [(a, b)] -> [(a, b)]
+      sortByFirsts = sortBy (\a b -> compare (fst a) (fst b))
+      groupByFirsts :: (Eq a) => [(a, b)] -> [[(a, b)]]
+      groupByFirsts = groupBy (\a b -> (fst a) == (fst b))
+      orderIssues :: (Ord a, Ord b) => [(a, [(a, [b])])] ->  [(a, [(a, [b])])]
+      orderIssues tris =
+        let concatSeconds abs = let h = fst $ head abs
+                                    snds = concatMap snd abs
+                                in (h, snds)
+            bySecond (t, ri) = let bySeconds = groupByFirsts ri
+                               in (t, map concatSeconds $ bySeconds)
+        in map (bySecond . concatSeconds) $ groupByFirsts tris
+      printSingleIssue s = show $ number s
       printOriginList :: [(String, [Issue])] -> String
       printOriginList elems =
           let printOrigin (origin, iss) =
@@ -196,7 +212,7 @@ printIssues issues =
       printTypeList :: (String, [(String, [Issue])]) -> String
       printTypeList (type_name, elems) =
           type_name ++ ":\n\t" ++ (printOriginList elems) ++ "\n"
-  in intercalate "\n  " $ map printTypeList issues
+  in intercalate "\n  " $ map printTypeList $ orderIssues issues
 
 showDuplicateIssues dup_existing_issues existing_issue_filelist =
   if length dup_existing_issues > 0
@@ -219,7 +235,7 @@ showDuplicateIssues dup_existing_issues existing_issue_filelist =
 data IssueFile = IssueFile
                  { ifPath :: FilePath
                  , ifDoc :: OrgDocView Issue
-                 } deriving (Show)
+                 }
 
 instance Eq IssueFile where
   a == b = ifPath a == ifPath b
@@ -229,20 +245,38 @@ instance Ord IssueFile where
 
 loadIssueFile :: FilePath -> IO IssueFile
 loadIssueFile path = do
-  doc <- loadOrgIssues path
+  let emptyDoc = OrgDocView [] (OrgDoc [] [])
+      ret_empty _ = return emptyDoc
+  doc <- catchIOError (loadOrgIssues path) ret_empty
   return $ IssueFile path doc
 
 issueIndex :: IssueFile -> [(Issue, IssueFile)]
 issueIndex ifile =
   map (\i -> (i, ifile)) $ getRawElements $ ifDoc ifile
 
-generateIssueFileText :: [(Issue, IssueFile)] -> String
-generateIssueFileText [] = ""
-generateIssueFileText issuelist =
+generateIssueFileText :: [(Issue, IssueFile)] -> Bool -> String
+generateIssueFileText [] _ = ""
+generateIssueFileText issuelist verbose =
   let issue_set = S.fromList $ map fst issuelist
       orig_doc = ifDoc . snd . head $ issuelist
       new_doc = updateDoc issue_set orig_doc
-  in (intercalate "\n" $ map tlText $ getTextLines new_doc) ++ "\n"
+      showType (OrgText _) = "X"
+      showType (OrgHeader _ _) = "H"
+      showType (OrgDrawer _) = "D"
+      showType (OrgPragma _ _) = "P"
+      showType (OrgBabel _) = "B"
+      showType (OrgTable _) = "T"
+      describeLine tl =
+        if verbose
+        then let linenr = show $ tlLineNum tl
+                 p_lnr = toNumber 0 $ tlLineNum tl
+                 parseRes = parseLine p_lnr (tlText tl)
+                 ty = case parseRes of
+                   Left err -> "[E:" ++ show err
+                   Right line -> showType line
+             in linenr ++ "\t [" ++ ty ++ "] %" ++ (tlText tl)
+        else "%" ++ tlText tl
+  in (intercalate "\n" $ map describeLine $ getTextLines new_doc) ++ "\n"
 
 -- | Swaps the Issues in in 'index' with those in 'issues'.  Those not
 -- used in the swap are returned as the first part of the pair, and
@@ -259,12 +293,12 @@ swapIssuesInIndex index issues =
 -- versions of the issues replacing the old.  Note that the 'snd'
 -- element of each item in the list must be the same, but we only use
 -- the first (list) element's snd.
-updateIssueFile :: [(Issue, IssueFile)] -> IO ()
-updateIssueFile issuelist = do
+updateIssueFile :: Bool -> [(Issue, IssueFile)] -> IO ()
+updateIssueFile verbose issuelist = do
   let path = ifPath $ snd $ head issuelist
       num_issues = show $ length issuelist
   putStrLn $ "** Rewriting " ++ path ++ " for " ++ num_issues ++ " issues."
-  writeFile path (generateIssueFileText issuelist)
+  writeFile path (generateIssueFileText issuelist verbose)
 
 loadIssuesFromConfiguration :: RunConfiguration -> IO [Issue]
 loadIssuesFromConfiguration runcfg = do
@@ -333,7 +367,10 @@ runConfiguration runcfg options = do
   -- For each changed file, load it up, update the issue->nodes, and
   -- then re-write the files.
   if write
-    then do mapM_ updateIssueFile changed_issues_byfile
+    then do putStrLn ("Writing to files: " ++ (
+                         intercalate "," (map (ifPath . snd) $
+                                          map head changed_issues_byfile)))
+            mapM_ (updateIssueFile verbose) changed_issues_byfile
     else return ()
 
   if verbose

@@ -5,7 +5,7 @@ module Data.OrgMode (
   OrgDocView(..), NodeUpdate(..), OrgDoc(..), TextLine(..), LineNumber(..),
   TextLineSource(..),
   toNumber, isNumber, linesStartingFrom, hasNumber, makeDrawerLines,
-  orgFile, generateDocView, getRawElements, updateNode, makeNodeLine
+  orgFile, generateDocView, getRawElements, updateNode, makeNodeLine, parseLine
   ) where
 -- TODO(lally): only export the interesting things!
 

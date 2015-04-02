@@ -57,7 +57,8 @@ spec = do
   describe "nodes text generation" $ do
     prop "each TextLine is a single line" $ propLinesOfNodeAreSingular
     prop "line numbers are proper" $ propLinesOfNodeSemiSorted
-    prop "fully numbered nodes are fully numbered properly" $ propLinesOfNumberedNodeSorted
+    prop "fully numbered nodes are fully numbered properly" $
+      propLinesOfNumberedNodeSorted
   describe "indents work right" $ do
     prop "indentation" $ propTextLineIndent
   describe "update works right" $ do
