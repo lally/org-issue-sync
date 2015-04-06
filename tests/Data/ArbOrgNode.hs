@@ -36,21 +36,24 @@ arbIndentFrom depth
     d <- choose (depth, mx)
     return d
 
-arbitraryText depth = do
+arbitraryTextCore mn depth = do
   let printable = allPrintableChars
       genSafeChar = elements printable
-      mxdpth = min (maxDepth - (max depth 0)) 0
+      mxdpth = max (maxDepth - (max depth 0)) 0
   numCharsInLine <- choose (1, mxdpth)
-  k <- choose (0,numCharsInLine)
+  k <- choose (mn,numCharsInLine)
   chars <- vectorOf k genSafeChar
   return chars
+
+arbitraryTextMin depth = arbitraryTextCore 1 depth
+arbitraryText depth = arbitraryTextCore 0 depth
 
 nextLine :: LineNumber -> LineNumber
 nextLine = flip mappend (Line 1)
 
 packLines :: Int -> LineNumber -> [String] -> [TextLine]
 packLines depth linenr lines =
-  let nrs = map (\n -> mappend linenr $ Line n) [1..]
+  let nrs = map (\n -> mappend linenr $ Line n) [0..]
       ln_nrs = zip lines nrs
       mkline (s,ln) = TextLine depth s ln
   in map mkline ln_nrs
@@ -84,7 +87,7 @@ arbDrawer lineno is_prop = do
         return (key, value)
   raw_key_vals <- listOf gen_kv
   -- unique-ify the keys in our key-val pair list.
-  indent <- elements [0..100]
+  indent <- elements [0..15]
   let props = M.toList $ M.fromList raw_key_vals
       lines = makeDrawerLines lineno indent dname props
   return $ Drawer dname props lines
@@ -124,7 +127,7 @@ arbNode :: LineNumber -> Int -> (LineNumber -> Gen LineNumber) -> Gen Node
 arbNode ln depth lnfunc = do
   -- generate the head, then generate some children.
   tags <- listOf arbIdentifier
-  topic <- arbitraryText 0
+  topic <- arbitraryTextMin 0
   prefix <- elements [Nothing, Just (Prefix "OPEN"), Just (Prefix "CLOSED"),
                       Just (Prefix "TODO"), Just (Prefix "ACTIVE"),
                       Just (Prefix "DONE")]
@@ -151,17 +154,17 @@ arbNode ln depth lnfunc = do
                   return (ChildTable table)
       comp_larger a b = if isNumber a && isNumber b then a > b else True
       step_child (linenr, xs) cld = do
-        nxln <- lnfunc linenr
-        child <- make_child cld nxln
+        child <- make_child cld linenr
         -- children can arbitrarily step forward their line numbers,
         -- so scan for the largest that they've done so.
         let mxline :: Int
             mxline = maximum $ map (\l -> toNumber 0 (tlLineNum l)) $ getTextLines child
-            nxtChildLn = if mxline == 0 then NoLine else Line mxline
+            nxln = if mxline == 0 then NoLine else Line mxline
+        nxtChildLn <- lnfunc nxln
         return (nxtChildLn, xs ++ [child])
   linenr <- lnfunc ln
-  (_, children) <- foldlM step_child (nextLine linenr, []) children_selected
-  let mkText nd = TextLine depth (makeNodeLine nd) linenr
+  (_, children) <- foldlM step_child (linenr, []) children_selected
+  let mkText nd = TextLine depth (makeNodeLine nd) ln
       nd = Node depth prefix tags children topic (mkText nd)
   return nd
 

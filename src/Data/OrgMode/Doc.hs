@@ -7,17 +7,17 @@ import Data.List (intercalate)
 
 import Data.OrgMode.Text
 
-data Prefix = Prefix String deriving (Eq)
+data Prefix = Prefix String deriving (Eq, Show)
 
 data Drawer = Drawer
               { drName :: String
               , drProperties :: [(String, String)]
               , drLines :: [TextLine]
-              } deriving (Eq)
+              } deriving (Eq, Show)
 
 -- |Just store the lines of the babel environment.
-data Babel = Babel [TextLine] deriving (Eq)
-data Table = Table [TextLine] deriving (Eq)
+data Babel = Babel [TextLine] deriving (Eq, Show)
+data Table = Table [TextLine] deriving (Eq, Show)
 
 -- |The body of a node has different parts.  We can put tables here,
 -- as well as Babel sections, later.
@@ -26,7 +26,7 @@ data NodeChild = ChildText TextLine
                | ChildNode Node
                | ChildBabel Babel
                | ChildTable Table
-                 deriving (Eq)
+                 deriving (Eq, Show)
 
 data Node = Node
             { nDepth :: Int
@@ -36,7 +36,7 @@ data Node = Node
               -- ^ In reverse order during construction.
             , nTopic :: String
             , nLine :: TextLine
-            } deriving (Eq)
+            } deriving (Eq, Show)
 
 data OrgFileProperty = OrgFileProperty { fpName :: String
                                        , fpValue :: String
@@ -44,11 +44,11 @@ data OrgFileProperty = OrgFileProperty { fpName :: String
 data OrgFile = OrgFile { orgTitle :: String
                        , orgProps :: [(String, String)]
                        , orgNodes :: [Node]
-                       } deriving (Eq)
+                       } deriving (Eq, Show)
 
 data OrgFileElement = OrgTopProperty OrgFileProperty
                     | OrgTopLevel { tlNode :: Node }
-                    deriving (Eq)
+                    deriving (Eq, Show)
 
 -- | We have one of these per input line of the file.  Some of these
 -- we just keep as the input text, in the TextLine (as they need
@@ -59,17 +59,17 @@ data OrgLine = OrgText TextLine
              | OrgPragma TextLine OrgFileProperty
              | OrgBabel TextLine
              | OrgTable TextLine
-             deriving (Eq)
+             deriving (Eq, Show)
 
 -- ^ Backwards!
 data OrgElement = OrgElNode Node
                 | OrgElPragma OrgFileProperty
-                deriving (Eq)
+                deriving (Eq, Show)
 
 data OrgDoc = OrgDoc
               { odNodes :: [Node]
               , odProperties :: [OrgFileProperty]
-              } deriving (Eq)
+              } deriving (Eq, Show)
 --
 -- * Instance Decls
 --

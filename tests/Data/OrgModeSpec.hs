@@ -6,7 +6,7 @@ import Control.Monad (liftM)
 import Data.OrgMode
 import Data.Char (isSpace, isPrint, chr, toUpper)
 import Data.Foldable (foldlM)
-import Data.List (sort, intercalate)
+import Data.List (sort, intercalate, nub)
 import qualified Data.Map as M
 import Data.Monoid
 import Test.Hspec
@@ -14,6 +14,23 @@ import Test.Hspec.QuickCheck (prop)
 import Test.QuickCheck hiding ((.&.))
 import Test.QuickCheck.Gen (elements)
 import Test.QuickCheck.Modifiers (getPositive)
+import Text.Printf
+
+spec :: Spec
+spec = do
+  describe "nodes text generation" $ do
+    prop "each TextLine is a single line" $ propLinesOfNodeAreSingular
+    prop "line numbers are proper" $ propLinesOfNodeSemiSorted
+    prop "fully numbered nodes are fully numbered properly" $
+      propLinesOfNumberedNodeSorted
+    prop "line numbers are unique" $ propLinesOfNodeAreUnique
+    prop "line numbers are sequential" $ propLinesOfNodeAreSequential
+  describe "indents work right" $ do
+    prop "indentation" $ propTextLineIndent
+  describe "parsing works right" $ do
+    prop "parse generates same text as original" $ propReparsedNodeSemiSorted 
+  describe "update works right" $ do
+    prop "merge" $ propLinesMergeProperly
 
 
 -- This is obviously a crap placeholder.  What we want is a mutation
@@ -52,25 +69,37 @@ instance Arbitrary UnnumberedNode where
     nd <- arbNode NoLine 1 lnfunc
     return (UnnumberedNode nd)
 
-spec :: Spec
-spec = do
-  describe "nodes text generation" $ do
-    prop "each TextLine is a single line" $ propLinesOfNodeAreSingular
-    prop "line numbers are proper" $ propLinesOfNodeSemiSorted
-    prop "fully numbered nodes are fully numbered properly" $
-      propLinesOfNumberedNodeSorted
-  describe "indents work right" $ do
-    prop "indentation" $ propTextLineIndent
-  describe "parsing works right" $ do
-    prop "parse generates same text as original" $ propReparsedNodeSemiSorted 
-  describe "update works right" $ do
-    prop "merge" $ propLinesMergeProperly
+data LineDiffNode = LineDiffNode Node deriving (Eq)
+instance Show LineDiffNode where
+  show (LineDiffNode node) =
+    let linesOfNode = getTextLines node
+        linesOfParsed = getTextLines $ orgFile $
+                        (intercalate "\n" $ map tlText linesOfNode) ++ "\n"
+        showDiff width (l, r) =
+          let colWidth = (width - 3) / 2
+              nrFmt = "%9s"
+              dpFmt = ":%2d>"
+              nrWidth = 13 -- based on nrFmt
+              textWidth = colWidth - nrWidth
+              tFmt = "%-" ++ (show textWidth) ++ "s"
+              fmtLine tl =
+                (printf nrFmt (show $ tlLineNum tl)) ++ (printf dpFmt (tlIndent tl)) ++
+                (printf tFmt $ tlText tl)
+          in (fmtLine l) ++ "|" ++ (fmtLine r)
+    -- in intercalate "\n" $ map (showDiff 120) $ zip linesOfNode linesOfParsed
+    in "(show node): " ++ (show node) ++ "\n\nOriginal Node:\n" ++ (intercalate "\n" $ map show linesOfNode)  ++ "\n\nParsed back in:\n" ++ (intercalate "\n" $ map show linesOfParsed)
+
+instance Arbitrary LineDiffNode where
+  arbitrary = do
+    let lnfunc (Line x) = return (Line (x+1))
+    nd <- arbNode (Line 1) 1 lnfunc
+    return (LineDiffNode nd)
 
 -- | Test TextLineSource OrgDoc.  We should give it nodes that do and
 -- don't have line numbers, and correctly assemble them.
 
-propReparsedNodeSemiSorted :: TestNode -> Bool
-propReparsedNodeSemiSorted (TestNode node) =
+propReparsedNodeSemiSorted :: LineDiffNode -> Bool
+propReparsedNodeSemiSorted (LineDiffNode node) =
   let lineCompare a b = tlText a == tlText b
       compareLines [] [] = True
       compareLines (a:as) [] = False
@@ -90,10 +119,23 @@ propLinesOfNumberedNodeSorted :: FullyNumberedNode -> Bool
 propLinesOfNumberedNodeSorted (FullyNumberedNode node) =
   linesSorted (getTextLines node) == True
 
-propLinesOfNodeAreSingular :: TestNode -> Bool
-propLinesOfNodeAreSingular (TestNode node) =
+propLinesOfNodeAreSingular :: FullyNumberedNode -> Bool
+propLinesOfNodeAreSingular (FullyNumberedNode node) =
   let hasNoNewLines tl = all (/= '\n') $ tlText tl
-  in all hasNoNewLines (getTextLines node) == True
+  in all hasNoNewLines (getTextLines node)
+
+propLinesOfNodeAreSequential :: FullyNumberedNode -> Bool
+propLinesOfNodeAreSequential (FullyNumberedNode node) =
+  let linesSequential [] = True
+      linesSequential [Line _] = True
+      linesSequential lst@((Line x):(Line y):xs) =
+        (y == x+1) && linesSequential (tail lst)
+  in linesSequential$ map tlLineNum $ getTextLines node
+
+propLinesOfNodeAreUnique :: FullyNumberedNode -> Bool
+propLinesOfNodeAreUnique (FullyNumberedNode node) =
+  let allLineNrs = map tlLineNum $ getTextLines node
+  in (length $ nub allLineNrs) == length allLineNrs
 
 propLinesMergeProperly :: FullyNumberedNode -> UnnumberedNode -> Bool
 propLinesMergeProperly (FullyNumberedNode host) (UnnumberedNode guest) =

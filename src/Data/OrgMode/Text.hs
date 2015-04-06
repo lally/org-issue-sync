@@ -77,9 +77,12 @@ data TextLine = TextLine
 hasNumber :: TextLine -> Bool
 hasNumber (TextLine _ _ (Line _)) = True
 hasNumber _ = False
+formatLine tl =
+  (printf "[%3d] " (tlIndent tl)) ++
+  (printf "%-8s" $ (show $ tlLineNum tl)) ++ "|" ++ (tlText tl)
 
 instance Show TextLine where
-  show tl = "<" ++ (show $tlLineNum tl) ++ ":" ++ (tlText tl) ++ ">"
+  show tl = "<" ++ (formatLine tl) ++ ">"
 
 instance Ord TextLine where
   compare a b = compare (tlLineNum a) (tlLineNum b)
@@ -158,9 +161,6 @@ makeDrawerLines fstLine depth name props =
 tlFormat :: (TextLineSource s) => s -> String
 tlFormat s =
   let lines = getTextLines s
-      formatLine tl =
-        (printf "[%3d] " (tlIndent tl)) ++
-        (printf "%-18s" $ (show $ tlLineNum tl)) ++ "|" ++ (tlText tl)
   in intercalate "\n" $ map formatLine lines
 
 tlPrint :: (TextLineSource s) => s -> IO ()

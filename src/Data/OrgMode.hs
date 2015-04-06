@@ -35,8 +35,9 @@ appendChildrenUpPathToDepth depth (n:ns)
     let parent = head ns
         parentChildren = nChildren parent
         fixedUpChild = n { nChildren = reverse $ nChildren n }
-        updatedParent = parent { nChildren = (ChildNode n):parentChildren }
-    in updatedParent : (tail ns)
+        updatedParent = parent { nChildren = (ChildNode fixedUpChild):parentChildren }
+        updatedPath = updatedParent : (tail ns)
+    in appendChildrenUpPathToDepth depth updatedPath
   | otherwise = (n:ns)
 
 -- | Closes up the path for the zipper, reversing the child-lists as we
@@ -44,6 +45,68 @@ appendChildrenUpPathToDepth depth (n:ns)
 closeZipPath doczip@(OrgDocZipper path nodes properties) =
   doczip { ozNodePath = [],
            ozNodes = nodes ++ (appendChildrenUpPathToDepth (-1) path) }
+
+
+isEndLine line = ":END:" == (trim $ tlText line)
+openDrawer (Just (ChildDrawer (Drawer _ _ []))) = True
+openDrawer (Just (ChildDrawer (Drawer _ _ lines))) =
+  not $ isEndLine $ last lines
+openDrawer _ = False
+parseDrawerName tline =
+  let matches = (tlText tline) =~ " *:([A-Za-z]*): *" :: [[String]]
+  in if length matches > 0
+     then matches !! 0 !! 1
+     else ""
+parseDrawerProperty tline =
+  let matches = (tlText tline) =~ " *:([-_A-Za-z]*):(.*)" :: [[String]]
+  in if length matches > 0
+     then [(matches !! 0 !! 1, trim $ matches !! 0 !! 2)]
+     else []
+
+addChildToNode n c = n { nChildren = c:(nChildren n) }
+addChildToLastNode c doczip path@(pn:pns) =
+  doczip { ozNodePath = (addChildToNode pn c):pns }
+updateLastChildOfLastNode c doczip path@(pn:pns) =
+  let updatedPn = pn { nChildren = c:(tail $ nChildren pn) }
+  in doczip { ozNodePath = updatedPn:pns }
+
+addBabel :: TextLine -> Maybe NodeChild -> (NodeChild -> OrgDocZipper) -> OrgDocZipper
+addBabel line lastChild adder = case lastChild of
+  Just (ChildBabel (Babel lines)) ->
+    adder $ ChildBabel $ Babel $ lines ++ [line]
+  Nothing -> adder (ChildBabel $ Babel [line])
+
+addTable :: TextLine -> Maybe NodeChild -> (NodeChild -> OrgDocZipper) -> OrgDocZipper
+addTable line lastChild adder = case lastChild of
+  Just (ChildTable (Table lines)) ->
+    adder $ ChildTable $ Table $ lines ++ [line]
+  Nothing -> adder (ChildTable $ Table [line])
+
+addDrawer :: TextLine -> Maybe NodeChild -> OrgDocZipper -> OrgDocZipper
+addDrawer line lastChild doczip@(OrgDocZipper path _ _)
+  | not (openDrawer lastChild) =
+    let drawer = Drawer (parseDrawerName line) [] [line]
+    in addChildToLastNode (ChildDrawer drawer) doczip path
+    -- Parse to get drProperties, and ignore :END:.
+  | otherwise =
+    let Just (ChildDrawer (Drawer n p lines)) = lastChild
+        props = parseDrawerProperty line
+        dlines = lines ++ [line]
+        update n p =
+          let drawer = ChildDrawer $ Drawer n p dlines
+          in updateLastChildOfLastNode drawer doczip path
+    in if isEndLine line
+       then update n p
+       else update n (p ++ props)
+
+addNode node doczip path@(pn:pns)
+  | nDepth node > nDepth pn = doczip { ozNodePath = node:path }
+  | nDepth node <= nDepth (last path) =
+    let closed = closeZipPath doczip
+    in closed { ozNodePath = [node] }
+  | otherwise =
+      let newpath = node:(appendChildrenUpPathToDepth (nDepth node) path)
+      in doczip { ozNodePath = newpath}
 
 -- | Adds a pre-classified OrgLine to an OrgDocZipper, possibly adding
 -- it to some existing part of the OrgDocZipper.
@@ -68,70 +131,18 @@ addOrgLine doczip@(OrgDocZipper path@(pn:pns) nodes props) orgline =
       -- followed with more properties.  We can detect this, expensively, by
       -- scanning for :END: in the last line of the existing drawer.
       -- Correctness over speed!
-      isEndLine line = ":END:" == (trim $ tlText line)
-      openDrawer (Just (ChildDrawer (Drawer _ _ []))) = True
-      openDrawer (Just (ChildDrawer (Drawer _ _ lines))) =
-        not $ isEndLine $ last lines
-      openDrawer _ = False
-      parseDrawerName tline =
-        let matches = (tlText tline) =~ " *:([A-Za-z]*): *" :: [[String]]
-        in if length matches > 0
-           then matches !! 0 !! 1
-           else ""
-      parseDrawerProperty tline =
-        let matches = (tlText tline) =~ " *:([-_A-Za-z]*):(.*)" :: [[String]]
-        in if length matches > 0
-           then [(matches !! 0 !! 1, trim $ matches !! 0 !! 2)]
-           else []
-
-      addChildToNode n c = n { nChildren = c:(nChildren n) }
-      addChildToLastNode c = doczip { ozNodePath = (addChildToNode pn c):pns }
-      updateLastChildOfLastNode c =
-        let updatedPn = pn { nChildren = c:(tail $ nChildren pn) }
-        in doczip { ozNodePath = updatedPn:pns }
       lastChild = let children = nChildren pn
                   in if null children then Nothing else Just $ last children
-      addBabel line = case lastChild of
-        Just (ChildBabel (Babel lines)) ->
-          updateLastChildOfLastNode $ ChildBabel $ Babel $ lines ++ [line]
-        Nothing -> addChildToLastNode (ChildBabel $ Babel [line])
+      adder cld = addChildToLastNode cld doczip path
 
-      addTable line = case lastChild of
-        Just (ChildTable (Table lines)) ->
-          updateLastChildOfLastNode $ ChildTable $ Table $ lines ++ [line]
-        Nothing -> addChildToLastNode (ChildTable $ Table [line])
-
-      addDrawer line
-        | not (openDrawer lastChild) =
-          let drawer = Drawer (parseDrawerName line) [] [line]
-          in addChildToLastNode (ChildDrawer drawer)
-          -- Parse to get drProperties, and ignore :END:.
-        | otherwise =
-          let Just (ChildDrawer (Drawer n p lines)) = lastChild
-              props = parseDrawerProperty line
-              dlines = lines ++ [line]
-              update n p =
-                updateLastChildOfLastNode $ ChildDrawer $ Drawer n p dlines
-          in if isEndLine line
-             then update n p
-             else update n (p ++ props)
-
-      addNode line node
-        | nDepth node > nDepth pn = doczip { ozNodePath = node:path }
-        | nDepth node <= nDepth (last path) =
-          let closed = closeZipPath doczip
-          in closed { ozNodePath = [node] }
-        | otherwise =
-            let newpath = node:(appendChildrenUpPathToDepth (nDepth node) path)
-            in doczip { ozNodePath = newpath}
   in case orgline of
-    (OrgText line) -> addChildToLastNode $ ChildText line
-    (OrgHeader line node) -> addNode line node
-    (OrgDrawer line) -> addDrawer line
+    (OrgText line) -> adder $ ChildText line
+    (OrgHeader line node) -> addNode node doczip path
+    (OrgDrawer line) -> addDrawer line lastChild doczip
     (OrgPragma line prop) ->
       doczip { ozProperties = (ozProperties doczip) ++ [prop] }
-    (OrgBabel line) -> addBabel line
-    (OrgTable line) -> addTable line
+    (OrgBabel line) -> addBabel line lastChild adder
+    (OrgTable line) -> addTable line lastChild adder
 
 -- | Intentionally fail when we don't have a parse success, which
 -- shouldn't happen...
