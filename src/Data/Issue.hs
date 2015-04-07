@@ -11,8 +11,10 @@ data IssueStatus = Open | Active | Closed deriving (Eq, Show)
 data IssueEventDetails = IssueStatusChange { isNewStatus :: IssueStatus }
                        | IssueComment { icComment :: String }
                        | IssueOwnerChange { ieNewOwner :: String }
-                       | IssueLabelChange { ilNewLabels :: [String], ilRemovedLabels :: [String] }
-                       | IssueMilestoneChange { imNewMileStone :: Maybe String, imOldMileStone :: Maybe String }
+                       | IssueLabelChange { ilNewLabels :: [String],
+                                            ilRemovedLabels :: [String] }
+                       | IssueMilestoneChange { imNewMileStone :: Maybe String,
+                                                imOldMileStone :: Maybe String }
                        deriving (Eq, Show)
 
 data IssueEvent = IssueEvent
@@ -64,20 +66,3 @@ instance Hashable Issue where
     (hashWithSalt salt $ origin iss) `xor` (
       hashWithSalt salt $ number iss) `xor` (
       hashWithSalt salt $ iType iss)
-
--- | Updates between issues.  Probably useless.
-data IssueDelta = IssueDelta { idProperty :: String
-                             , idOldValue :: String
-                             , idNewValue :: String } deriving (Eq, Show)
-
-issueDelta :: Issue -> Issue -> [IssueDelta]
-issueDelta left right =
-  let funcs = [ ("User", user)
-              , ("Status", show . status)
-              , ("Tags", show . tags)
-              , ("Summary", summary) ]
-      applyF l r (nm, propFn)  =
-        if (propFn l /= propFn r)
-        then Just $ IssueDelta nm  (propFn l) (propFn r)
-        else Nothing
-  in mapMaybe (applyF left right) funcs
