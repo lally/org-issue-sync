@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Data.IssueXML where
+module Data.IssueJSON where
 
 import Control.Applicative
 import Control.Monad
