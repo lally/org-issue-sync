@@ -67,7 +67,7 @@ library
                        github, configurator, unordered-containers, text, old-locale,
                        regex-posix, exceptions, Glob, hashable, time, tagsoup, HTF, syb,
                        QuickCheck, hspec, containers, random, http-types, http-conduit, aeson,
-                       bytestring, directory
+                       bytestring, directory, Glob
 
   if flag(network-uri)
      build-depends: network-uri >= 2.6, network >= 2.6
@@ -90,7 +90,8 @@ executable sync-issues
                       containers >= 0.5, HStringTemplate >= 0.7.3, parsec,
                       github, configurator, unordered-containers, text, old-locale,
                       regex-posix, exceptions, Glob, hashable, time, tagsoup, HTF, 
-                      syb, random, http-types, http-conduit, aeson, bytestring, directory
+                      syb, random, http-types, http-conduit, aeson, bytestring, 
+                      directory, Glob
 
   -- Other library packages from which modules are imported.
   if flag(network-uri)
@@ -113,7 +114,7 @@ Test-Suite spec
                      github, configurator, unordered-containers, text, old-locale,
                      regex-posix, exceptions, Glob, hashable, time, tagsoup,
                      QuickCheck, hspec >= 1.3, containers, random, HTF, syb,
-                     http-types, http-conduit, aeson, bytestring, directory
+                     http-types, http-conduit, aeson, bytestring, directory, Glob
 
   if flag(network-uri)
      build-depends: network-uri >= 2.6, network >= 2.6

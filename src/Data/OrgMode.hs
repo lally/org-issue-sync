@@ -5,7 +5,8 @@ module Data.OrgMode (
   OrgDocView(..), NodeUpdate(..), OrgDoc(..), TextLine(..), LineNumber(..),
   TextLineSource(..),
   toNumber, isNumber, linesStartingFrom, hasNumber, makeDrawerLines,
-  orgFile, generateDocView, getRawElements, updateNode, makeNodeLine, parseLine
+  orgFile, generateDocView, getRawElements, updateNode, makeNodeLine, parseLine,
+  addOrgLine, emptyZip, categorizeLines
   ) where
 -- TODO(lally): only export the interesting things!
 
@@ -26,26 +27,62 @@ import Text.StringTemplate
 
 -- ** Zipper Facilities
 
--- | Closes up the path for the zipper, up to the specified depth.
-appendChildrenUpPathToDepth :: Int -> [Node] -> [Node]
-appendChildrenUpPathToDepth _ [] = []
-appendChildrenUpPathToDepth depth [n] = [n { nChildren = reverse $ nChildren n }]
-appendChildrenUpPathToDepth depth (n:ns)
-  | nDepth n > depth =
+printChild (ChildNode n) = Just $ nTopic n
+printChild _ = Nothing
+
+printChildren = (intercalate ",") . catMaybes . (map printChild) . nChildren
+
+-- | Closes up the path for the zipper, up through to (e.g., >=) the
+-- specified depth.  Returns the new path, and roots that have been fully closed
+appendChildrenUpPathThroughDepth :: Int -> [Node] -> ([Node], [Node])
+appendChildrenUpPathThroughDepth _ [] = ([], [])
+appendChildrenUpPathThroughDepth depth [n]
+  | nDepth n >= depth =
+    let res = [n { nChildren = reverse $ nChildren n }]
+        traceMsg = "<" ++ (show depth) ++ ">[" ++ (nTopic n) ++ ": " ++ (printChildren n) ++ "]"
+    in ([], res)
+  | otherwise = ([n], [])
+
+-- The problem is that I'm flipping the parent twice.  I want it to be
+-- once, but I'm not sure about depth vs nDepth of that parent!  Well, I
+-- have the depth of the parent, so I know the depth I've already
+-- reversed.  How do I use this?
+--
+-- First, which parents do I reverse?  The ones that are *closed*.
+-- Any one that's staying on the path after this function is closed.
+-- If it's staying, it should not be reversed.  We only reverse ones
+-- that we take out of the path, except for up top, where we keep it.
+--
+-- And that's the problem.  We don't trim the root out after reversal,
+-- and make it susceptable to some weirdness here.  We don't recurse
+-- again on it, so what's our base case?  BASE CASE:
+-- Node with children: reverse 
+appendChildrenUpPathThroughDepth depth (n:ns)
+  | nDepth n >= depth =
     let parent = head ns
         parentChildren = nChildren parent
         fixedUpChild = n { nChildren = reverse $ nChildren n }
         updatedParent = parent { nChildren = (ChildNode fixedUpChild):parentChildren }
         updatedPath = updatedParent : (tail ns)
-    in appendChildrenUpPathToDepth depth updatedPath
-  | otherwise = (n:ns)
+        traceMsg = "+<" ++ (show depth) ++ ">[" ++ (nTopic n) ++ ": " ++ (printChildren n) ++ "]"
+    in appendChildrenUpPathThroughDepth depth updatedPath
+  | otherwise = (n:ns, [])
+
+addNode node doczip path@(pn:pns)
+  | nDepth node > nDepth pn = doczip { ozNodePath = node:path }
+  | nDepth node <= nDepth (last path) =
+    let closed = closeZipPath doczip
+    in closed { ozNodePath = [node] }
+  | otherwise =
+      let (parentPath, newnodes) = appendChildrenUpPathThroughDepth (nDepth node) path
+          newpath = node:parentPath
+      in doczip { ozNodePath = newpath, ozNodes = newnodes ++ (ozNodes doczip) }
 
 -- | Closes up the path for the zipper, reversing the child-lists as we
 -- go (to get them into first->last order).
 closeZipPath doczip@(OrgDocZipper path nodes properties) =
   doczip { ozNodePath = [],
-           ozNodes = nodes ++ (appendChildrenUpPathToDepth (-1) path) }
-
+           ozNodes = nodes ++ (snd (appendChildrenUpPathThroughDepth (-1) path)) }
 
 isEndLine line = ":END:" == (trim $ tlText line)
 openDrawer (Just (ChildDrawer (Drawer _ _ []))) = True
@@ -99,15 +136,6 @@ addDrawer line lastChild doczip@(OrgDocZipper path _ _)
        then update n p
        else update n (p ++ props)
 
-addNode node doczip path@(pn:pns)
-  | nDepth node > nDepth pn = doczip { ozNodePath = node:path }
-  | nDepth node <= nDepth (last path) =
-    let closed = closeZipPath doczip
-    in closed { ozNodePath = [node] }
-  | otherwise =
-      let newpath = node:(appendChildrenUpPathToDepth (nDepth node) path)
-      in doczip { ozNodePath = newpath}
-
 -- | Adds a pre-classified OrgLine to an OrgDocZipper, possibly adding
 -- it to some existing part of the OrgDocZipper.
 addOrgLine :: OrgDocZipper -> OrgLine -> OrgDocZipper
@@ -151,6 +179,13 @@ allRight (Right b) = b
 
 -- * Primary File Parser
 
+categorizeLines :: String -> [OrgLine]
+categorizeLines text =
+  let fileLines = lines text
+  in map (\(nr, line) -> allRight $ parseLine nr line) $ zip [1..] fileLines
+
+emptyZip = OrgDocZipper [] [] []
+
 -- | Parsing the file efficiently.  Let's keep it non-quadratic.
 --   - Split it up into lines
 --   - Identify each line, as part of one of the big structure types:
@@ -164,14 +199,9 @@ allRight (Right b) = b
 --     tree.
 orgFile :: String -> OrgDoc
 orgFile fileContents =
-  let fileLines = lines fileContents
-      categorizedLines =
-        map (\(nr, line) -> allRight $ parseLine nr line) $ zip [1..] fileLines
-      -- ^ keep the structure reversed, so that the last element's at
-      emptyzip = OrgDocZipper [] [] []
-      (OrgDocZipper path nodes props) =
-        foldl addOrgLine emptyzip categorizedLines
-      all_nodes = nodes ++ appendChildrenUpPathToDepth (-1) path
+  let (OrgDocZipper path nodes props) =
+        foldl addOrgLine emptyZip (categorizeLines fileContents)
+      all_nodes = nodes ++ (snd $ appendChildrenUpPathThroughDepth (-1) path)
   in OrgDoc all_nodes props
 
 rstrip xs = reverse $ lstrip $ reverse xs
@@ -257,7 +287,8 @@ nodeLine = do
                      else topic
   tags <- orgSuffix
   loc <- getState
-  let line = OrgHeader loc $ Node depth prefix tags [] (strip topic_remain) loc
+  let fxloc = loc { tlIndent = depth }
+      line = OrgHeader loc $ Node depth prefix tags [] (strip topic_remain) fxloc
   return line
 
 propertyLine :: Parsec String TextLine OrgLine

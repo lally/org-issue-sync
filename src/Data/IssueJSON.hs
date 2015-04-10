@@ -65,14 +65,14 @@ instance FromJSON IssueEventDetails where
       otherwise -> mzero
 
 instance ToJSON IssueEventDetails where
-  toJSON (IssueStatusChange ns) = object [ "newStatus" .= ns ]
-  toJSON (IssueComment cmm) = object [ "comment" .= cmm ]
-  toJSON (IssueOwnerChange no) = object [ "new" .= no ]
+  toJSON (IssueStatusChange ns) = object [ ("type", "status"), "newStatus" .= ns ]
+  toJSON (IssueComment cmm) = object [ ("type" , "comment"), "comment" .= cmm ]
+  toJSON (IssueOwnerChange no) = object [ ("type" , "owner"), "new" .= no ]
   toJSON (IssueLabelChange nw rm) =
     let news = if length nw > 0 then ["new" .= nw] else []
         rems = if length rm > 0 then ["removed" .= rm] else []
-    in object (news ++ rems)
+    in object $ [("type" , "label")] ++ (news ++ rems)
   toJSON (IssueMilestoneChange new old) =
     let cns label val = maybe [] (\s -> [label .= s]) val
-    in object ((cns "new" new) ++ (cns "old" old))
+    in object $ [("type", "milestone")] ++  ((cns "new" new) ++ (cns "old" old))
 

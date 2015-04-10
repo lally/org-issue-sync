@@ -20,6 +20,7 @@ import Data.OrgMode.Text
 import Data.OrgMode.Doc
 import Data.OrgMode.OrgDocView
 import Data.Issue
+import Data.IssueCache
 import Data.OrgIssue
 import System.IO
 import System.IO.Error
@@ -41,8 +42,12 @@ data RunConfiguration = RunConfiguration
                         , rcGitHubOAuth :: Maybe String
                         , rcGitHubSources :: [GitHubSource]
                         , rcGoogleCodeSources :: [GoogleCodeSource]
+                        , rcCache :: Maybe IssueStore
                         } deriving (Eq, Show)
 
+-- |Semantics: When not fetching issues, we can still scan the cache for
+-- issues, and put them in.  But we may not write new ones out
+-- (roWriteNewIssues), or not update existing issues (roUpdateIssues).
 data RunOptions = RunOptions
                   { roFetchIssues :: Bool
                   , roWriteNewIssues :: Bool
@@ -132,13 +137,22 @@ loadConfig config = do
                                         return (Just $ concat files)
                         Nothing -> return Nothing
   output_file <- DC.lookup config "output_file"
+  cache <- DC.lookup config "cache_dir"
   github_oauth <- DC.lookup config "github.auth_token" :: IO (Maybe T.Text)
+  cache_dir <- if isJust cache
+               then do let (Just store) = cache
+                       res <- makeStore store
+                       case res of
+                         Nothing -> do putStrLn $ "Could not find cache_dir " ++ store
+                                       return res
+                         otherwise -> return res
+               else return Nothing
   let gh_list = loadGHSources configmap
       gc_list = loadGCSources configmap
       file_list = Just raw_file_list
       gh_auth = fmap T.unpack github_oauth
   return $ RunConfiguration <$> raw_file_list <*> output_file <*> (pure gh_auth) <*> (
-    pure gh_list) <*> (pure gc_list)
+    pure gh_list) <*> (pure gc_list) <*> (pure cache_dir)
 
 loadOrgIssues :: (NodeUpdate a) => FilePath -> IO (OrgDocView a)
 loadOrgIssues file = do
@@ -184,25 +198,26 @@ categorize issues =
         \a b -> (origin a == origin b)) s
   in map (\s -> (iType $ head s, byOrigin s)) byType
 
+-- (type, [(repo, issue)]
+sortByFirsts :: (Ord a) => [(a, b)] -> [(a, b)]
+sortByFirsts = sortBy (\a b -> compare (fst a) (fst b))
+groupByFirsts :: (Eq a) => [(a, b)] -> [[(a, b)]]
+groupByFirsts = groupBy (\a b -> (fst a) == (fst b))
+orderIssues :: (Ord a, Ord b) => [(a, [(a, [b])])] ->  [(a, [(a, [b])])]
+orderIssues tris =
+  let concatSeconds abs = let h = fst $ head abs
+                              snds = concatMap snd abs
+                          in (h, snds)
+      bySecond (t, ri) = let bySeconds = groupByFirsts ri
+                         in (t, map concatSeconds $ bySeconds)
+  in map (bySecond . concatSeconds) $ groupByFirsts tris
+
 -- | Print a reasonably-well formatted list of issues, grouped by type
 -- and repo first.  Would be better with pretty-printer support, to
 -- get terminal width, etc.
 printIssues :: [(String, [(String, [Issue])])] -> String
 printIssues issues =
-  let -- (type, [(repo, issue)]
-      sortByFirsts :: (Ord a) => [(a, b)] -> [(a, b)]
-      sortByFirsts = sortBy (\a b -> compare (fst a) (fst b))
-      groupByFirsts :: (Eq a) => [(a, b)] -> [[(a, b)]]
-      groupByFirsts = groupBy (\a b -> (fst a) == (fst b))
-      orderIssues :: (Ord a, Ord b) => [(a, [(a, [b])])] ->  [(a, [(a, [b])])]
-      orderIssues tris =
-        let concatSeconds abs = let h = fst $ head abs
-                                    snds = concatMap snd abs
-                                in (h, snds)
-            bySecond (t, ri) = let bySeconds = groupByFirsts ri
-                               in (t, map concatSeconds $ bySeconds)
-        in map (bySecond . concatSeconds) $ groupByFirsts tris
-      printSingleIssue s = show $ number s
+  let printSingleIssue s = show $ number s
       printOriginList :: [(String, [Issue])] -> String
       printOriginList elems =
           let printOrigin (origin, iss) =
@@ -327,7 +342,7 @@ fetchIssues runcfg verbose = do
               " GitHub queries...")
     else return ()
 
-  gh_issues <- mapM (loadGHSource github_auth)  github
+  gh_issues <- mapM (loadGHSource github_auth) github
 
   if verbose
     then do putStrLn $ "Loading from " ++ (show $ length googlecode) ++ (
@@ -337,6 +352,16 @@ fetchIssues runcfg verbose = do
   gc_issues <- mapM loadGCSource googlecode
 
   let found_issues = nub $ sort $ concat (gh_issues ++ gc_issues)
+
+  if isJust $ rcCache runcfg
+    then do let (Just store) = rcCache runcfg
+            mapM (saveIssue store) found_issues
+            if verbose
+              then do putStrLn $ "Saved " ++ (show $ length found_issues) ++
+                        " issues to cache"
+                      return ()
+              else return ()
+    else return ()
   return found_issues
 
 runConfiguration :: RunConfiguration -> RunOptions -> IO ()
@@ -348,6 +373,7 @@ runConfiguration runcfg options = do
       googlecode = rcGoogleCodeSources runcfg
       (RunOptions fetch write verbose update) = options
       scan_files = nub orig_scan_files
+      have_cache = isJust $ rcCache runcfg
 
   raw_existing_issues <- mapM loadIssueFile scan_files
 
@@ -357,7 +383,14 @@ runConfiguration runcfg options = do
 
   found_issues <- if fetch
                   then fetchIssues runcfg verbose
-                  else return []
+                  else if have_cache
+                       then do let (Just cache) = rcCache runcfg
+                               isss <- loadAllIssues cache
+                               if verbose
+                                  then putStrLn $ "Loaded " ++ (show $ length isss) ++ " issues from cache:\n" ++ (printIssues $ categorize isss)
+                                 else return ()
+                               return isss
+                       else return []
 
   let new_issues = found_issues \\ existing_issues
       -- scan for changed issues

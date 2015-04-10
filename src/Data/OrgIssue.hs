@@ -186,6 +186,14 @@ replaceAtIndex c n lst@(x:xs)
   | n == 0 = c:xs
   | otherwise = lst ++ [c]
 
+summarizeChild :: NodeChild -> String
+summarizeChild (ChildNode nd) = "Node: " ++ nTopic nd
+summarizeChild (ChildText tl) = "TextLine: pfx=" ++ (
+  take 10 $ dropWhile isSpace $ tlText tl)
+summarizeChild (ChildDrawer nl) = "Drawer: " ++ drName nl
+summarizeChild (ChildBabel (Babel tls)) = "Babel: len=" ++ (show $ length tls)
+summarizeChild (ChildTable (Table tls)) = "Table: len=" ++ (show $ length tls)
+
 updateOrgIssueNodeLine iss node =
   -- Put ISSUE EVENTS after any children that would otherwise fall
   -- underneath this new node.  That is, any nodes of depth (parent
@@ -195,9 +203,11 @@ updateOrgIssueNodeLine iss node =
   -- - The old index.
   let -- puts the new ISSUE EVENTS child |chld| in place of the old
       -- one, or at the end if we didn't find one.
-      updateChild chld children =
-        replaceAtIndex chld (finalChildIndex node children) $
-        filter (not . isGeneratedChild) children
+      summaryNode = ChildText $ TextLine (nDepth node) (
+        intercalate ", " $ map summarizeChild $ nChildren node) NoLine
+      updateChild chld children = summaryNode:chld:children
+--        replaceAtIndex chld (finalChildIndex node children) $
+--        filter (not . isGeneratedChild) children
       preservedTags tags = filter (elem '@') tags
       statusPrefix = Just $ Prefix $ map toUpper (issueStatus $ status iss)
   in case getOrgIssue node of
