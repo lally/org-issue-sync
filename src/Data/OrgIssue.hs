@@ -165,7 +165,7 @@ isGeneratedChild _ = False
 findSafeChildInsertion node =
   let wouldBecomeChild (ChildNode nd) = nDepth nd > (1 + nDepth node)
       wouldBecomeChild _ = True
-  in length $ filter wouldBecomeChild $ nChildren node
+  in length $ takeWhile wouldBecomeChild $ nChildren node
 
 origChildIndex :: [NodeChild] -> Maybe Int
 origChildIndex children =
@@ -179,11 +179,11 @@ finalChildIndex node children =
       safePoint = findSafeChildInsertion node
   in maybe safePoint (\o -> max o safePoint) origIdx
 
-replaceAtIndex :: a -> Int -> [a] -> [a]
-replaceAtIndex c n [] = [c]
-replaceAtIndex c n lst@(x:xs)
-  | n > 0 = x:(replaceAtIndex c (n-1) xs)
-  | n == 0 = c:xs
+insertAtIndex :: a -> Int -> [a] -> [a]
+insertAtIndex c n [] = [c]
+insertAtIndex c n lst@(x:xs)
+  | n > 0 = x:(insertAtIndex c (n-1) xs)
+  | n == 0 = c:lst
   | otherwise = lst ++ [c]
 
 summarizeChild :: NodeChild -> String
@@ -205,9 +205,9 @@ updateOrgIssueNodeLine iss node =
       -- one, or at the end if we didn't find one.
       summaryNode = ChildText $ TextLine (nDepth node) (
         intercalate ", " $ map summarizeChild $ nChildren node) NoLine
-      updateChild chld children = summaryNode:chld:children
---        replaceAtIndex chld (finalChildIndex node children) $
---        filter (not . isGeneratedChild) children
+      updateChild chld children = -- summaryNode:chld:children
+        insertAtIndex chld (finalChildIndex node children) $
+        filter (not . isGeneratedChild) children
       preservedTags tags = filter (elem '@') tags
       statusPrefix = Just $ Prefix $ map toUpper (issueStatus $ status iss)
   in case getOrgIssue node of

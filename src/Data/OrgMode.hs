@@ -39,7 +39,6 @@ appendChildrenUpPathThroughDepth _ [] = ([], [])
 appendChildrenUpPathThroughDepth depth [n]
   | nDepth n >= depth =
     let res = [n { nChildren = reverse $ nChildren n }]
-        traceMsg = "<" ++ (show depth) ++ ">[" ++ (nTopic n) ++ ": " ++ (printChildren n) ++ "]"
     in ([], res)
   | otherwise = ([n], [])
 

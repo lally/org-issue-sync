@@ -16,6 +16,11 @@ import Test.QuickCheck.Gen (elements)
 import Test.QuickCheck.Modifiers (getPositive)
 import Text.Printf
 
+withFileData :: String -> (String -> IO ()) -> IO ()
+withFileData fname fun = do
+  text <- readFile fname
+  fun text
+
 spec :: Spec
 spec = do
   describe "nodes text generation" $ do
@@ -32,7 +37,12 @@ spec = do
     prop "parsed hierarchy is correct" $ propReparsedNodeHierRight
   describe "update works right" $ do
     prop "merge" $ propLinesMergeProperly
-
+  describe "test files" $ do
+    it "parses and serializes files back the way they were" $ (
+      withFileData "test-data/misread.org") $ \filedata -> do
+      let origOrg = orgFile filedata
+          origLines = (intercalate "\n" $ map tlText $ getTextLines origOrg) ++ "\n"
+      origLines `shouldBe` filedata
 
 -- This is obviously a crap placeholder.  What we want is a mutation
 -- of a tree that results in TextLines.
@@ -70,31 +80,29 @@ instance Arbitrary UnnumberedNode where
     nd <- arbNode NoLine 1 lnfunc
     return (UnnumberedNode nd)
 
+showDiff width (l, r) =
+  let colWidth = (width - 3) `div` 2
+      nrFmt = "%9s"
+      dpFmt = ":%2d "
+      nrWidth = 13 -- based on nrFmt+dpFmt
+      textWidth = colWidth - nrWidth
+      tFmt = "%-" ++ (show textWidth) ++ "s"
+      fmtLine tl =
+        (printf nrFmt (show $ tlLineNum tl)) ++ (printf dpFmt (tlIndent tl)) ++
+        (printf tFmt $ take textWidth $ tlText tl)
+      diffAttr a c = if a l == a r then ' ' else c
+      diffChars = (diffAttr tlLineNum 'l') : (
+        diffAttr tlIndent 'i') : [diffAttr tlText 't']
+  in (fmtLine l) ++ diffChars ++ (fmtLine r)
+
 data LineDiffNode = LineDiffNode Node deriving (Eq)
 instance Show LineDiffNode where
   show (LineDiffNode node) =
     let linesOfNode = getTextLines node
         linesOfParsed = getTextLines $ orgFile $
-                        (intercalate "\n" $ map tlText linesOfNode) 
-        showDiff width (l, r) =
-          let colWidth = (width - 3) `div` 2
-              nrFmt = "%9s"
-              dpFmt = ":%2d "
-              nrWidth = 13 -- based on nrFmt+dpFmt
-              textWidth = colWidth - nrWidth
-              tFmt = "%-" ++ (show textWidth) ++ "s"
-              fmtLine tl =
-                (printf nrFmt (show $ tlLineNum tl)) ++ (printf dpFmt (tlIndent tl)) ++
-                (printf tFmt $ take textWidth $ tlText tl)
-              diffAttr a c = if a l == a r then ' ' else c
-              diffChars = (diffAttr tlLineNum 'l') : (
-                diffAttr tlIndent 'i') : [diffAttr tlText 't']
-          in (fmtLine l) ++ diffChars ++ (fmtLine r)
+                        (intercalate "\n" $ map tlText linesOfNode)
     in "(show node): " ++ (show node) ++ "\n\n" ++ (
       intercalate "\n" $ map (showDiff 120) $ zip linesOfNode linesOfParsed)
-    {-in "(show node): " ++ (show node) ++ "\n\nOriginal Node:\n" ++ (
-      intercalate "\n" $ map show linesOfNode)  ++ "\n\nParsed back in:\n" ++ (
-      intercalate "\n" $ map show linesOfParsed) -}
 
 instance Arbitrary LineDiffNode where
   arbitrary = do
