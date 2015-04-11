@@ -1,4 +1,4 @@
-module Data.OrgModeSpec (spec, linesSemiSorted) where
+module Data.OrgModeSpec  where
 
 import Data.ArbOrgNode
 import Control.Applicative ((<$>))
@@ -16,6 +16,11 @@ import Test.QuickCheck.Gen (elements)
 import Test.QuickCheck.Modifiers (getPositive)
 import Text.Printf
 
+withFileData :: String -> (String -> IO ()) -> IO ()
+withFileData fname fun = do
+  text <- readFile fname
+  fun text
+
 spec :: Spec
 spec = do
   describe "nodes text generation" $ do
@@ -28,10 +33,16 @@ spec = do
   describe "indents work right" $ do
     prop "indentation" $ propTextLineIndent
   describe "parsing works right" $ do
-    prop "parse generates same text as original" $ propReparsedNodeSemiSorted 
+    prop "parse generates same text as original" $ propReparsedNodeSemiSorted
+    prop "parsed hierarchy is correct" $ propReparsedNodeHierRight
   describe "update works right" $ do
     prop "merge" $ propLinesMergeProperly
-
+  describe "test files" $ do
+    it "parses and serializes files back the way they were" $ (
+      withFileData "test-data/misread.org") $ \filedata -> do
+      let origOrg = orgFile filedata
+          origLines = (intercalate "\n" $ map tlText $ getTextLines origOrg) ++ "\n"
+      origLines `shouldBe` filedata
 
 -- This is obviously a crap placeholder.  What we want is a mutation
 -- of a tree that results in TextLines.
@@ -69,25 +80,29 @@ instance Arbitrary UnnumberedNode where
     nd <- arbNode NoLine 1 lnfunc
     return (UnnumberedNode nd)
 
+showDiff width (l, r) =
+  let colWidth = (width - 3) `div` 2
+      nrFmt = "%9s"
+      dpFmt = ":%2d "
+      nrWidth = 13 -- based on nrFmt+dpFmt
+      textWidth = colWidth - nrWidth
+      tFmt = "%-" ++ (show textWidth) ++ "s"
+      fmtLine tl =
+        (printf nrFmt (show $ tlLineNum tl)) ++ (printf dpFmt (tlIndent tl)) ++
+        (printf tFmt $ take textWidth $ tlText tl)
+      diffAttr a c = if a l == a r then ' ' else c
+      diffChars = (diffAttr tlLineNum 'l') : (
+        diffAttr tlIndent 'i') : [diffAttr tlText 't']
+  in (fmtLine l) ++ diffChars ++ (fmtLine r)
+
 data LineDiffNode = LineDiffNode Node deriving (Eq)
 instance Show LineDiffNode where
   show (LineDiffNode node) =
     let linesOfNode = getTextLines node
         linesOfParsed = getTextLines $ orgFile $
-                        (intercalate "\n" $ map tlText linesOfNode) ++ "\n"
-        showDiff width (l, r) =
-          let colWidth = (width - 3) / 2
-              nrFmt = "%9s"
-              dpFmt = ":%2d>"
-              nrWidth = 13 -- based on nrFmt
-              textWidth = colWidth - nrWidth
-              tFmt = "%-" ++ (show textWidth) ++ "s"
-              fmtLine tl =
-                (printf nrFmt (show $ tlLineNum tl)) ++ (printf dpFmt (tlIndent tl)) ++
-                (printf tFmt $ tlText tl)
-          in (fmtLine l) ++ "|" ++ (fmtLine r)
-    -- in intercalate "\n" $ map (showDiff 120) $ zip linesOfNode linesOfParsed
-    in "(show node): " ++ (show node) ++ "\n\nOriginal Node:\n" ++ (intercalate "\n" $ map show linesOfNode)  ++ "\n\nParsed back in:\n" ++ (intercalate "\n" $ map show linesOfParsed)
+                        (intercalate "\n" $ map tlText linesOfNode)
+    in "(show node): " ++ (show node) ++ "\n\n" ++ (
+      intercalate "\n" $ map (showDiff 120) $ zip linesOfNode linesOfParsed)
 
 instance Arbitrary LineDiffNode where
   arbitrary = do
@@ -111,6 +126,12 @@ propReparsedNodeSemiSorted (LineDiffNode node) =
                       (intercalate "\n" $ map tlText linesOfNode) ++ "\n"
   in compareLines linesOfNode linesOfParsed
 
+propReparsedNodeHierRight :: FullyNumberedNode -> Bool
+propReparsedNodeHierRight (FullyNumberedNode node) =
+  let nodeTextLines = map tlText $ getTextLines node
+      parsedNode = orgFile $ (intercalate "\n" nodeTextLines) ++ "\n"
+  in all nodeHierarchyCorrect $ odNodes parsedNode
+
 propLinesOfNodeSemiSorted :: TestNode -> Bool
 propLinesOfNodeSemiSorted (TestNode node) =
   linesSemiSorted (getTextLines node) == True
@@ -131,6 +152,7 @@ propLinesOfNodeAreSequential (FullyNumberedNode node) =
       linesSequential lst@((Line x):(Line y):xs) =
         (y == x+1) && linesSequential (tail lst)
   in linesSequential$ map tlLineNum $ getTextLines node
+
 
 propLinesOfNodeAreUnique :: FullyNumberedNode -> Bool
 propLinesOfNodeAreUnique (FullyNumberedNode node) =
@@ -184,6 +206,14 @@ linesMergeProperly firsts seconds merged =
   linesSemiSorted firsts && linesSemiSorted seconds && 
   linesSemiSorted merged && relativeLineOrderPreserved firsts merged && 
   relativeLineOrderPreserved seconds merged
+
+nodeHierarchyCorrect :: Node -> Bool
+nodeHierarchyCorrect nd =
+  let childIsUnderParent :: Int -> NodeChild -> Bool
+      childIsUnderParent depth (ChildNode nd) =
+        nDepth nd > depth && (nodeHierarchyCorrect nd)
+      childIsUnderParent _ _ = True
+  in all (childIsUnderParent (nDepth nd)) $ nChildren nd
 
 -- | Test OrgDocZipper.  We should be able to take a Node -> Maybe
 -- Node, (and verify that its line numbers are all dead!) and

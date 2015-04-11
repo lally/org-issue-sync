@@ -17,7 +17,7 @@ data OrgDocZipper = OrgDocZipper
                      { ozNodePath :: [Node]
                      , ozNodes :: [Node]
                      , ozProperties :: [OrgFileProperty]
-                     } deriving (Eq)
+                     } deriving (Eq, Show)
 
 data OrgDocView a = OrgDocView
                     { ovElements :: [(a, Node)]

@@ -109,7 +109,7 @@ arbTable linenr = do
   indent <- arbIndent
   let arb_table_line = do
         body <- arbitraryText indent
-        return ("|" ++ body ++ "|")
+        return ((take indent$repeat ' ' ) ++ "|" ++ body ++ "|")
   first_line <- arb_table_line
   rest <- listOf1 arb_table_line
   let lines = packLines indent linenr (first_line:(take 10 rest))

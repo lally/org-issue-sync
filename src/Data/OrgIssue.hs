@@ -165,7 +165,7 @@ isGeneratedChild _ = False
 findSafeChildInsertion node =
   let wouldBecomeChild (ChildNode nd) = nDepth nd > (1 + nDepth node)
       wouldBecomeChild _ = True
-  in length $ filter wouldBecomeChild $ nChildren node
+  in length $ takeWhile wouldBecomeChild $ nChildren node
 
 origChildIndex :: [NodeChild] -> Maybe Int
 origChildIndex children =
@@ -179,12 +179,20 @@ finalChildIndex node children =
       safePoint = findSafeChildInsertion node
   in maybe safePoint (\o -> max o safePoint) origIdx
 
-replaceAtIndex :: a -> Int -> [a] -> [a]
-replaceAtIndex c n [] = [c]
-replaceAtIndex c n lst@(x:xs)
-  | n > 0 = x:(replaceAtIndex c (n-1) xs)
-  | n == 0 = c:xs
+insertAtIndex :: a -> Int -> [a] -> [a]
+insertAtIndex c n [] = [c]
+insertAtIndex c n lst@(x:xs)
+  | n > 0 = x:(insertAtIndex c (n-1) xs)
+  | n == 0 = c:lst
   | otherwise = lst ++ [c]
+
+summarizeChild :: NodeChild -> String
+summarizeChild (ChildNode nd) = "Node: " ++ nTopic nd
+summarizeChild (ChildText tl) = "TextLine: pfx=" ++ (
+  take 10 $ dropWhile isSpace $ tlText tl)
+summarizeChild (ChildDrawer nl) = "Drawer: " ++ drName nl
+summarizeChild (ChildBabel (Babel tls)) = "Babel: len=" ++ (show $ length tls)
+summarizeChild (ChildTable (Table tls)) = "Table: len=" ++ (show $ length tls)
 
 updateOrgIssueNodeLine iss node =
   -- Put ISSUE EVENTS after any children that would otherwise fall
@@ -195,8 +203,10 @@ updateOrgIssueNodeLine iss node =
   -- - The old index.
   let -- puts the new ISSUE EVENTS child |chld| in place of the old
       -- one, or at the end if we didn't find one.
-      updateChild chld children =
-        replaceAtIndex chld (finalChildIndex node children) $
+      summaryNode = ChildText $ TextLine (nDepth node) (
+        intercalate ", " $ map summarizeChild $ nChildren node) NoLine
+      updateChild chld children = -- summaryNode:chld:children
+        insertAtIndex chld (finalChildIndex node children) $
         filter (not . isGeneratedChild) children
       preservedTags tags = filter (elem '@') tags
       statusPrefix = Just $ Prefix $ map toUpper (issueStatus $ status iss)
