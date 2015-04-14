@@ -11,6 +11,7 @@ import qualified Sync.Retrieve.GitHub.GitHub as GH
 --import Control.Exception.Base (handle)
 import Control.Monad (join)
 import Data.List (nub, (\\), sort, sortBy, intersect, groupBy, intercalate, partition)
+import Data.Hashable
 import Data.Maybe
 import System.FilePath.Glob
 import Debug.Trace
@@ -38,12 +39,47 @@ data GitHubSource = GitHubSource
 
 data RunConfiguration = RunConfiguration
                         { rcScanFiles :: [FilePath]
+                        , rcStubFiles :: [FilePath]
                         , rcOutputFile :: FilePath
                         , rcGitHubOAuth :: Maybe String
                         , rcGitHubSources :: [GitHubSource]
                         , rcGoogleCodeSources :: [GoogleCodeSource]
                         , rcCache :: Maybe IssueStore
                         } deriving (Eq, Show)
+
+data IssueFile = IssueFile
+                 { ifPath :: FilePath
+                 , ifDoc :: OrgDocView Issue
+                 }
+
+instance Eq IssueFile where
+  a == b = ifPath a == ifPath b
+
+instance Ord IssueFile where
+  compare a b = compare (ifPath a) (ifPath b)
+
+instance Show IssueFile where
+  show = ifPath
+
+-- |We get issues from multiple sources, track that, and their states.
+data InputIssue = FetchedIssue { fiIssue :: Issue } -- ^From a network source.
+                  -- |An issue loaded from an org file.
+                | LoadedIssue { liUpdate:: Bool
+                              , liFile:: IssueFile
+                              , liIssue:: Issue }
+                  -- |An issue that was loaded from an org file, then
+                  -- updated from the network.
+                | MergedIssue { miFetchedIssue :: Issue
+                              , miLoadedIssue :: Issue }
+                deriving (Eq, Show)
+
+issueof :: InputIssue -> Issue
+issueof (FetchedIssue fi) = fi
+issueof (LoadedIssue _ _ is) = is
+
+instance Hashable InputIssue where
+  hashWithSalt i s = hashWithSalt i (issueof s)
+
 
 -- |Semantics: When not fetching issues, we can still scan the cache for
 -- issues, and put them in.  But we may not write new ones out
@@ -128,14 +164,20 @@ loadGHSources config =
            else [makeGH []]
   in concatMap getRepoData repos
 
+loadFileGlob :: Maybe [String] -> IO (Maybe [FilePath])
+loadFileGlob pats =
+  case pats of
+    (Just xs) -> do files <- mapM glob xs
+                    return (Just $ concat files)
+    Nothing -> return Nothing
+
 loadConfig :: DCT.Config -> IO (Maybe RunConfiguration)
 loadConfig config = do
   configmap <- DC.getMap config
   file_patterns <- DC.lookup config "scan_files"
-  raw_file_list <- case file_patterns of
-                        (Just xs) -> do files <- mapM glob xs
-                                        return (Just $ concat files)
-                        Nothing -> return Nothing
+  file_list <- loadFileGlob file_patterns
+  stub_patterns <- DC.lookup config "stub_files"
+  stub_list <- loadFileGlob stub_patterns
   output_file <- DC.lookup config "output_file"
   cache <- DC.lookup config "cache_dir"
   github_oauth <- DC.lookup config "github.auth_token" :: IO (Maybe T.Text)
@@ -149,10 +191,9 @@ loadConfig config = do
                else return Nothing
   let gh_list = loadGHSources configmap
       gc_list = loadGCSources configmap
-      file_list = Just raw_file_list
       gh_auth = fmap T.unpack github_oauth
-  return $ RunConfiguration <$> raw_file_list <*> output_file <*> (pure gh_auth) <*> (
-    pure gh_list) <*> (pure gc_list) <*> (pure cache_dir)
+  return $ RunConfiguration <$> file_list <*> stub_list <*> output_file <*>
+    (pure gh_auth) <*> (pure gh_list) <*> (pure gc_list) <*> (pure cache_dir)
 
 loadOrgIssues :: (NodeUpdate a) => FilePath -> IO (OrgDocView a)
 loadOrgIssues file = do
@@ -191,13 +232,14 @@ describeConfiguration runcfg = do
   putStrLn $ "Will put new issues into " ++ output
 
 -- | Type, Repo, Issue
-categorize :: [Issue] -> [(String, [(String, [Issue])])]
+  {-
+categorize :: [InputIssue] -> [(String, [(String, [Issue])])]
 categorize issues =
   let byType = groupBy (\a b -> (iType a == iType b)) issues
       byOrigin s = map (\s -> (origin $ head s, s)) $ groupBy (
         \a b -> (origin a == origin b)) s
   in map (\s -> (iType $ head s, byOrigin s)) byType
-
+-}
 -- (type, [(repo, issue)]
 sortByFirsts :: (Ord a) => [(a, b)] -> [(a, b)]
 sortByFirsts = sortBy (\a b -> compare (fst a) (fst b))
@@ -212,6 +254,10 @@ orderIssues tris =
                          in (t, map concatSeconds $ bySeconds)
   in map (bySecond . concatSeconds) $ groupByFirsts tris
 
+printIssues :: [InputIssue] -> String
+printIssues issues =
+  intercalate "\n" $ map show issues
+{-
 -- | Print a reasonably-well formatted list of issues, grouped by type
 -- and repo first.  Would be better with pretty-printer support, to
 -- get terminal width, etc.
@@ -228,6 +274,7 @@ printIssues issues =
       printTypeList (type_name, elems) =
           type_name ++ ":\n\t" ++ (printOriginList elems) ++ "\n"
   in intercalate "\n  " $ map printTypeList $ orderIssues issues
+-}
 
 showDuplicateIssues dup_existing_issues existing_issue_filelist =
   if length dup_existing_issues > 0
@@ -238,7 +285,7 @@ showDuplicateIssues dup_existing_issues existing_issue_filelist =
               showiss (iss, cnt) =
                 (show cnt) ++ ": " ++ idIssue iss
               showfile (fn, iss) =
-                fn ++ ":\n" ++ (printIssues $ categorize iss)
+                fn ++ ":\n" ++ (printIssues iss)
           putStrLn (intercalate "\n" (
                        map showiss dup_existing_issues))
           putStrLn "All issues by file:"
@@ -247,17 +294,6 @@ showDuplicateIssues dup_existing_issues existing_issue_filelist =
           return ()
   else return ()
 
-data IssueFile = IssueFile
-                 { ifPath :: FilePath
-                 , ifDoc :: OrgDocView Issue
-                 }
-
-instance Eq IssueFile where
-  a == b = ifPath a == ifPath b
-
-instance Ord IssueFile where
-  compare a b = compare (ifPath a) (ifPath b)
-
 loadIssueFile :: FilePath -> IO IssueFile
 loadIssueFile path = do
   let emptyDoc = OrgDocView [] (OrgDoc [] [])
@@ -265,36 +301,17 @@ loadIssueFile path = do
   doc <- catchIOError (loadOrgIssues path) ret_empty
   return $ IssueFile path doc
 
-issueIndex :: IssueFile -> [(Issue, IssueFile)]
-issueIndex ifile =
-  map (\i -> (i, ifile)) $ getRawElements $ ifDoc ifile
+issueIndex :: Bool -> IssueFile -> [(InputIssue, IssueFile)]
+issueIndex update ifile =
+  map (\i -> (LoadedIssue update ifile i, ifile)) $ getRawElements $ ifDoc ifile
 
-generateIssueFileText :: [(Issue, IssueFile)] -> Bool -> String
+generateIssueFileText :: [(InputIssue, IssueFile)] -> Bool -> String
 generateIssueFileText [] _ = ""
 generateIssueFileText issuelist verbose =
-  let issue_set = S.fromList $ map fst issuelist
+  let issue_set = S.fromList $ map (issueof . fst) issuelist
       orig_doc = ifDoc . snd . head $ issuelist
       new_doc = updateDoc issue_set orig_doc
-      showType (OrgText _) = "X"
-      showType (OrgHeader _ _) = "H"
-      showType (OrgDrawer _) = "D"
-      showType (OrgPragma _ _) = "P"
-      showType (OrgBabel _) = "B"
-      showType (OrgTable _) = "T"
-      describeLine tl =
-        if verbose
-        then let linenr = show $ tlLineNum tl
-                 p_lnr = toNumber 0 $ tlLineNum tl
-                 parseRes = parseLine p_lnr (tlText tl)
-                 ty = case parseRes of
-                   Left err -> "[E:" ++ show err
-                   Right line -> showType line
-             in linenr ++ "\t [" ++ ty ++ "] %" ++ (tlText tl)
-        else tlText tl
-      allLines = getTextLines new_doc
-      allOldLines = getTextLines orig_doc
-      sl = show . length
-  in (intercalate "\n" $ map describeLine $ getTextLines new_doc) ++ "\n"
+  in (intercalate "\n" $ map tlText $ getTextLines new_doc) ++ "\n"
 
 -- | Swaps the Issues in in 'index' with those in 'issues'.  Those not
 -- used in the swap are returned as the first part of the pair, and
@@ -311,7 +328,7 @@ swapIssuesInIndex index issues =
 -- versions of the issues replacing the old.  Note that the 'snd'
 -- element of each item in the list must be the same, but we only use
 -- the first (list) element's snd.
-updateIssueFile :: Bool -> [(Issue, IssueFile)] -> IO ()
+updateIssueFile :: Bool -> [(InputIssue, IssueFile)] -> IO ()
 updateIssueFile verbose issuelist = do
   let path = ifPath $ snd $ head issuelist
       num_issues = show $ length issuelist
@@ -378,19 +395,21 @@ runConfiguration runcfg options = do
   raw_existing_issues <- mapM loadIssueFile scan_files
 
   let existing_issue_map = HM.fromList $
-                           concatMap issueIndex raw_existing_issues
+                           concatMap (issueIndex True) raw_existing_issues
       existing_issues = HM.keys existing_issue_map
 
-  found_issues <- if fetch
-                  then fetchIssues runcfg verbose
-                  else if have_cache
-                       then do let (Just cache) = rcCache runcfg
-                               isss <- loadAllIssues cache
-                               if verbose
-                                  then putStrLn $ "Loaded " ++ (show $ length isss) ++ " issues from cache:\n" ++ (printIssues $ categorize isss)
-                                 else return ()
-                               return isss
-                       else return []
+  raw_found_issues <-
+    if fetch
+    then fetchIssues runcfg verbose
+    else if have_cache
+         then do let (Just cache) = rcCache runcfg
+                 isss <- loadAllIssues cache
+                 if verbose
+                   then putStrLn $ "Loaded " ++ (show $ length isss) ++ " issues from cache:\n" ++ (printIssues $ map FetchedIssue isss)
+                   else return ()
+                 return isss
+         else return []
+  let found_issues = map FetchedIssue raw_found_issues
 
   let new_issues = found_issues \\ existing_issues
       -- scan for changed issues
@@ -413,25 +432,17 @@ runConfiguration runcfg options = do
     then do putStrLn $ "Found " ++ (show $ length new_issues) ++ " new issues"
             -- showDuplicateIssues dup_existing_issues existing_issue_filelist
             putStr $ "Existing issues:\n  "
-            putStrLn $ printIssues $ categorize existing_issues
+            putStrLn $ printIssues existing_issues
             putStr $ "Issues found from queries:\n  "
-            putStrLn $ printIssues $ categorize found_issues
+            putStrLn $ printIssues found_issues
             putStr $ "New Issues:\n  "
-            putStrLn $ printIssues $ categorize new_issues
+            putStrLn $ printIssues new_issues
     else return ()
 
   if write
     then do putStrLn $ "Writing issues to " ++ output
-            appendIssues output new_issues
+            appendIssues output $ map issueof new_issues
     else return ()
   return ()
 
-runSimpleDiff :: String -> String -> IO ()
-runSimpleDiff firstFile secondFile = do
-  return ()
-
-loadIssues :: String -> IO ([(Issue, IssueFile)])
-loadIssues filename = do
-  file <- loadIssueFile filename
-  return $ issueIndex file
 
