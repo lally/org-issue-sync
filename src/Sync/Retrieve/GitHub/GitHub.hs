@@ -51,7 +51,8 @@ convertIssueEvent :: GD.Event -> [IssueEvent]
 convertIssueEvent event
 -- status change
   | (GD.eventType event) == GD.Assigned = [
-    wrapEvent event $ IssueOwnerChange (GD.githubOwnerLogin $ GD.eventActor event)]
+    wrapEvent event $ IssueOwnerChange (
+       GD.githubOwnerLogin $ GD.eventActor event)]
   | (GD.eventType event) == GD.Closed = [
     wrapEvent event $ IssueStatusChange Closed]
   | (GD.eventType event) == GD.ActorUnassigned = [
@@ -98,8 +99,8 @@ loadIssueComments oauth user repo num = do
     Right comments ->
       return $ concatMap convertIssueComment comments
 
-loadIssueEvents :: Maybe GA.GithubAuth -> String -> String -> GD.Issue -> IO [IssueEvent]
-loadIssueEvents oauth user repo iss = do
+loadIssueEvents :: Maybe GA.GithubAuth -> String -> String -> Int -> IO [IssueEvent]
+loadIssueEvents oauth user repo issnum = do
   let classifyError (GD.HTTPConnectionError ex) =
         case (fromException ex) of
           Just (StatusCodeException st _ _) -> "HTTP Connection Error " ++
@@ -107,11 +108,11 @@ loadIssueEvents oauth user repo iss = do
                                                show (statusMessage st)
           _ -> "HTTP Connection Error (unknown status code): " ++ show ex
       classifyError err = show err
-  res <- GIE.eventsForIssue user repo (GD.issueNumber iss)
+  res <- GIE.eventsForIssue user repo issnum
   case res of
     Left err -> do
       putStrLn (user ++ "/" ++ repo ++ ": issue " ++ (
-                   show $ GD.issueNumber iss) ++ ": " ++ classifyError err)
+                   show issnum) ++ ": " ++ classifyError err)
       return []
     Right events ->
       return $ concatMap convertIssueEvent events
@@ -124,6 +125,19 @@ makeIssueComment issue =
       userName = GD.githubOwnerLogin user
       createDate = GD.fromGithubDate $ GD.issueCreatedAt issue
   in IssueEvent createDate userName (IssueComment (maybe "" id (GD.issueBody issue)))
+
+makeAuth :: Maybe String -> Maybe GA.GithubAuth
+makeAuth Nothing = Nothing
+makeAuth (Just s) = Just $ GA.GithubOAuth s
+
+fetchDetails :: Maybe String -> String -> String -> Issue -> IO (Issue)
+fetchDetails tok user repo issue = do
+  let auth = makeAuth tok
+      issuenum = number issue
+  eventList <- loadIssueEvents auth user repo issuenum
+  commentList <- loadIssueComments auth user repo issuenum
+  -- assume that the issue already has the initial comment.
+  return issue { events = (events issue) ++ (sort eventList ++ commentList) }
 
 fetch :: Maybe String -> String -> String -> Maybe IssueStatus -> [String] -> IO [Issue]
 fetch tok user repo stat tags = do
@@ -143,12 +157,11 @@ fetch tok user repo stat tags = do
       putStrLn $ show err
       return []
     Right issues -> do
-      eventList <- mapM (loadIssueEvents auth user repo) issues
-      commentList <-
-        mapM (\i -> loadIssueComments auth user repo (GD.issueNumber i)) issues
+--      eventList <- mapM (\is -> loadIssueEvents auth user repo $ GD.issueNumber is) issues
+--      commentList <-
+--        mapM (\i -> loadIssueComments auth user repo (GD.issueNumber i)) issues
       let convertedIssues = map (convertIssue (user++"/"++repo)) issues
           comments = map makeIssueComment issues
-          conversions =
-            zip convertedIssues $ zip3 comments eventList commentList
+          conversions = zip convertedIssues comments
       return $
-        map (\(i,(comm,es,cs)) -> i { events = comm:(sort es++cs) }) conversions
+        map (\(i,comm) -> i { events = [comm] }) conversions

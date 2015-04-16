@@ -2,15 +2,17 @@
 -- TODO(lally): trim down these exports.
 module OrgSync where
 import qualified Data.HashMap.Strict as HM
+import qualified Data.HashSet as HS
 import qualified Data.Configurator as DC
 import qualified Data.Configurator.Types as DCT
 import qualified Data.Text as T
 import qualified Data.Set as S
 import qualified Sync.Retrieve.GoogleCode.GoogleCode as GC
 import qualified Sync.Retrieve.GitHub.GitHub as GH
+import qualified System.Console.Terminal.Size as TS
 --import Control.Exception.Base (handle)
 import Control.Monad (join)
-import Data.List (nub, (\\), sort, sortBy, intersect, groupBy, intercalate, partition)
+import Data.List -- (nub, (\\), sort, find, sortBy, intersect, groupBy, intercalate, partition)
 import Data.Hashable
 import Data.Maybe
 import System.FilePath.Glob
@@ -69,17 +71,27 @@ data InputIssue = FetchedIssue { fiIssue :: Issue } -- ^From a network source.
                               , liIssue:: Issue }
                   -- |An issue that was loaded from an org file, then
                   -- updated from the network.
-                | MergedIssue { miFetchedIssue :: Issue
-                              , miLoadedIssue :: Issue }
-                deriving (Eq, Show)
+                | MergedIssue { fetchedIssue :: Issue
+                              , loadedIssue :: Issue
+                              , loadedFile :: IssueFile
+                              , loadedUpdate :: Bool }
+                deriving (Show)
 
 issueof :: InputIssue -> Issue
 issueof (FetchedIssue fi) = fi
 issueof (LoadedIssue _ _ is) = is
+issueof (MergedIssue fi _ _ _) = fi
 
 instance Hashable InputIssue where
   hashWithSalt i s = hashWithSalt i (issueof s)
 
+instance Eq InputIssue where
+  a == b = issueof a == issueof b
+
+eqIssue a b = issueof a == issueof b
+
+instance Ord InputIssue where
+  compare a b = compare (issueof a) (issueof b)
 
 -- |Semantics: When not fetching issues, we can still scan the cache for
 -- issues, and put them in.  But we may not write new ones out
@@ -127,7 +139,6 @@ getMultiList config key =
 loadGCSources :: HM.HashMap DCT.Name DCT.Value -> [GoogleCodeSource]
 loadGCSources config =
   let repos = getChildrenOf config "google-code.projects"
-      -- TODO: make this just [GoogleCodeSource]
       getRepoData :: T.Text -> [GoogleCodeSource]
       getRepoData repo =
         let rPlus s = repo `T.append` s
@@ -169,7 +180,12 @@ loadFileGlob pats =
   case pats of
     (Just xs) -> do files <- mapM glob xs
                     return (Just $ concat files)
-    Nothing -> return Nothing
+    Nothing -> return $ Just []
+
+commentLn :: Bool -> String -> IO ()
+commentLn verbose s = if verbose
+                      then putStrLn s
+                      else return ()
 
 loadConfig :: DCT.Config -> IO (Maybe RunConfiguration)
 loadConfig config = do
@@ -207,6 +223,7 @@ loadOrgIssues file = do
 describeConfiguration :: RunConfiguration -> IO ()
 describeConfiguration runcfg = do
   let scan_files = rcScanFiles runcfg
+      stub_files = rcStubFiles runcfg
       output = rcOutputFile runcfg
       github = rcGitHubSources runcfg
       googlecode = rcGoogleCodeSources runcfg
@@ -254,13 +271,35 @@ orderIssues tris =
                          in (t, map concatSeconds $ bySeconds)
   in map (bySecond . concatSeconds) $ groupByFirsts tris
 
-printIssues :: [InputIssue] -> String
-printIssues issues =
-  intercalate "\n" $ map show issues
-{-
 -- | Print a reasonably-well formatted list of issues, grouped by type
 -- and repo first.  Would be better with pretty-printer support, to
 -- get terminal width, etc.
+printIssues :: Int -> [InputIssue] -> String
+printIssues width inpissues =
+  let issues = map issueof inpissues
+      byType = aggregateBy iType issues
+      byTypeAndRepo = map (\(t, iss) -> (t, aggregateBy origin iss)) byType
+      printIssueList :: String -> [Int] -> String
+      printIssueList orign issuenums =
+        let rawString = orign ++ ": " ++ (intercalate ", " $
+                                          map show $ sort issuenums)
+            kIndentLevel = 4
+            indent = replicate kIndentLevel ' '
+            doubleIndent = replicate (kIndentLevel*2)
+            rawWrappedLines = lines $
+              wrapStringVarLines (width - kIndentLevel:
+                                  repeat (width - 2*kIndentLevel)) rawString
+            wrapped = (indent ++ (head rawWrappedLines)):(
+              map (\s -> indent ++ indent ++ s) (tail rawWrappedLines))
+        in intercalate "\n" wrapped
+      printIssuesForType :: (String, [(String, [Issue])]) -> String
+      printIssuesForType (ty, rest) =
+        let printRestElem :: (String, [Issue]) -> String
+            printRestElem (orig, iss) = printIssueList orig $ map number iss
+        in ty ++ ":\n" ++ (intercalate "\n" $ map printRestElem rest)
+  in intercalate "\n" $ map printIssuesForType byTypeAndRepo
+
+{-
 printIssues :: [(String, [(String, [Issue])])] -> String
 printIssues issues =
   let printSingleIssue s = show $ number s
@@ -274,7 +313,6 @@ printIssues issues =
       printTypeList (type_name, elems) =
           type_name ++ ":\n\t" ++ (printOriginList elems) ++ "\n"
   in intercalate "\n  " $ map printTypeList $ orderIssues issues
--}
 
 showDuplicateIssues dup_existing_issues existing_issue_filelist =
   if length dup_existing_issues > 0
@@ -293,6 +331,7 @@ showDuplicateIssues dup_existing_issues existing_issue_filelist =
                     map showfile existing_issue_filelist)
           return ()
   else return ()
+-}
 
 loadIssueFile :: FilePath -> IO IssueFile
 loadIssueFile path = do
@@ -305,11 +344,11 @@ issueIndex :: Bool -> IssueFile -> [(InputIssue, IssueFile)]
 issueIndex update ifile =
   map (\i -> (LoadedIssue update ifile i, ifile)) $ getRawElements $ ifDoc ifile
 
-generateIssueFileText :: [(InputIssue, IssueFile)] -> Bool -> String
-generateIssueFileText [] _ = ""
-generateIssueFileText issuelist verbose =
-  let issue_set = S.fromList $ map (issueof . fst) issuelist
-      orig_doc = ifDoc . snd . head $ issuelist
+generateIssueFileText :: IssueFile -> [InputIssue] -> String
+generateIssueFileText _ [] = ""
+generateIssueFileText file issuelist =
+  let issue_set = S.fromList $ map issueof issuelist
+      orig_doc = ifDoc file
       new_doc = updateDoc issue_set orig_doc
   in (intercalate "\n" $ map tlText $ getTextLines new_doc) ++ "\n"
 
@@ -328,44 +367,51 @@ swapIssuesInIndex index issues =
 -- versions of the issues replacing the old.  Note that the 'snd'
 -- element of each item in the list must be the same, but we only use
 -- the first (list) element's snd.
-updateIssueFile :: Bool -> [(InputIssue, IssueFile)] -> IO ()
-updateIssueFile verbose issuelist = do
-  let path = ifPath $ snd $ head issuelist
-      num_issues = show $ length issuelist
-  putStrLn $ "** Rewriting " ++ path ++ " for " ++ num_issues ++ " issues."
-  writeFile path (generateIssueFileText issuelist verbose)
+updateIssueFile :: Bool -> IssueFile -> [InputIssue] -> IO ()
+updateIssueFile verbose file issuelist = do
+  let num_issues = show $ length issuelist
+      path = ifPath file
+  commentLn verbose $ "** Rewriting " ++ path ++ " for " ++ num_issues ++ " issues."
+  writeFile path (generateIssueFileText file issuelist)
 
-loadIssuesFromConfiguration :: RunConfiguration -> IO [Issue]
+-- TODO: use this instead of the blob in runConfiguration.
+-- TODO: put in stubs.
+--
+-- PLAN: Load in stubs and then merge them into into a hash set,
+-- replacing any existing ones there.  I just need a replacing
+-- insertion operator, which is just HM.insert.
+loadIssuesFromConfiguration :: RunConfiguration -> IO [InputIssue]
 loadIssuesFromConfiguration runcfg = do
   let orig_scan_files = rcScanFiles runcfg
       scan_files = nub orig_scan_files
+      orig_stub_files = rcStubFiles runcfg
+      stub_files = nub orig_stub_files
   raw_existing_issues <- mapM loadIssueFile scan_files
-  let docs = map ifDoc raw_existing_issues
-      issues = map fst $ concatMap ovElements docs
-  return issues
+  raw_stub_issues <- mapM loadIssueFile stub_files
+  let getIssues save issuefile =
+        let raw_issues = map fst $ ovElements $ ifDoc issuefile
+        in map (LoadedIssue save issuefile) raw_issues
+      existing_issues = concatMap (getIssues True) raw_existing_issues
+      stub_issues = concatMap (getIssues False) raw_stub_issues
+      issue_map :: HS.HashSet InputIssue
+      issue_map = foldl (flip HS.insert) (HS.fromList existing_issues) existing_issues
+  return $ nub $ sort $ HS.toList issue_map
 
 fetchIssues runcfg verbose = do
   let github_auth = rcGitHubOAuth runcfg
       github = rcGitHubSources runcfg
       googlecode = rcGoogleCodeSources runcfg
   -- Load the issues from our sources
-  let loadGHSource oauth (GitHubSource user project tags) =
+      loadGHSource oauth (GitHubSource user project tags) =
         GH.fetch oauth user project (Just Open) tags
       loadGCSource (GoogleCodeSource repo terms) =
         GC.fetch repo terms
+      cL = commentLn verbose
 
-  if verbose
-    then do putStrLn $ "Loading from " ++ (show $ length github) ++ (
-              " GitHub queries...")
-    else return ()
-
+  cL $ "Loading from " ++ (show $ length github) ++ " GitHub queries..."
   gh_issues <- mapM (loadGHSource github_auth) github
 
-  if verbose
-    then do putStrLn $ "Loading from " ++ (show $ length googlecode) ++ (
-              " GoogleCode queries...")
-    else return ()
-
+  cL $ "Loading from " ++ (show $ length googlecode) ++ " GoogleCode queries..."
   gc_issues <- mapM loadGCSource googlecode
 
   let found_issues = nub $ sort $ concat (gh_issues ++ gc_issues)
@@ -373,74 +419,89 @@ fetchIssues runcfg verbose = do
   if isJust $ rcCache runcfg
     then do let (Just store) = rcCache runcfg
             mapM (saveIssue store) found_issues
-            if verbose
-              then do putStrLn $ "Saved " ++ (show $ length found_issues) ++
-                        " issues to cache"
-                      return ()
-              else return ()
+            cL $ "Saved " ++ (show $ length found_issues) ++ " issues to cache"
     else return ()
   return found_issues
 
+-- |Applies |f| to each element in |elems|, and then groups by the
+-- same result.  The groups are in (result, [elem]) format, where each
+-- [f e| e <- elems] == result.
+aggregateBy f elems =
+  let sortPfx f a b = compare (f a) (f b)
+      eqPfx f a b = (f a) == (f b)
+      pairs = map (\i -> (f i, i)) elems
+      grouped = groupBy (eqPfx fst) $ sortBy (sortPfx fst) pairs
+      aggEach es = (fst $ head es, map snd es)
+  in map aggEach grouped
+
 runConfiguration :: RunConfiguration -> RunOptions -> IO ()
 runConfiguration runcfg options = do
-  -- Scan all the existing files.
-  let orig_scan_files = rcScanFiles runcfg
-      output = rcOutputFile runcfg
+  -- Scan all the existing files. TODO: use loadIssuesFromConfiguration
+  let output = rcOutputFile runcfg
       github = rcGitHubSources runcfg
       googlecode = rcGoogleCodeSources runcfg
       (RunOptions fetch write verbose update) = options
-      scan_files = nub orig_scan_files
       have_cache = isJust $ rcCache runcfg
+      cL = commentLn verbose
+  raw_winsize <- TS.size
+  let kWidth = case raw_winsize of
+        Nothing -> 80
+        Just win -> TS.width win
+  file_issues <- loadIssuesFromConfiguration runcfg
 
-  raw_existing_issues <- mapM loadIssueFile scan_files
+  cL "\n\n** Done loading **\n"
 
-  let existing_issue_map = HM.fromList $
-                           concatMap (issueIndex True) raw_existing_issues
-      existing_issues = HM.keys existing_issue_map
-
-  raw_found_issues <-
+  repo_issues <-
     if fetch
-    then fetchIssues runcfg verbose
+    then do raw_iss <- fetchIssues runcfg verbose
+            return $ map FetchedIssue $ nub $ sort raw_iss
     else if have_cache
          then do let (Just cache) = rcCache runcfg
-                 isss <- loadAllIssues cache
-                 if verbose
-                   then putStrLn $ "Loaded " ++ (show $ length isss) ++ " issues from cache:\n" ++ (printIssues $ map FetchedIssue isss)
-                   else return ()
-                 return isss
+                 raw_iss <- loadAllIssues cache
+                 let issues = map FetchedIssue $ nub $ sort raw_iss
+                 cL  $ "Loaded " ++ (show $ length issues) ++
+                   " issues from cache:\n" ++ (printIssues kWidth issues)
+                 return issues
          else return []
-  let found_issues = map FetchedIssue raw_found_issues
 
-  let new_issues = found_issues \\ existing_issues
-      -- scan for changed issues
-      changed_issues_byfile =
-        let changed = found_issues \\ new_issues
-            idx = map (\k -> (k, fromJust $ HM.lookup k existing_issue_map )) changed
-            sorted = sortBy (\(_,a) (_,b) -> compare a b) idx
-        in groupBy (\(_,a) (_,b) -> a == b) sorted
+  let new_issues = repo_issues \\ file_issues
+      changed_issues_raw = file_issues `intersect` repo_issues
+      changed_issues =
+        let makeMerge fi =
+              let fetched = fromJust $ find (eqIssue fi) repo_issues
+                  loaded = liIssue fi
+                  update = liUpdate fi
+                  file = liFile fi
+              in MergedIssue (issueof fetched) loaded file update
+        in map makeMerge changed_issues_raw
+      -- Scan for changed issues.
+      fileOf (MergedIssue _ _ f _) = f
+      changed_issues_byfile :: [(IssueFile, [InputIssue])]
+      changed_issues_byfile = aggregateBy fileOf changed_issues
+
+  -- TODO: separate changed_issues into ones to update and ones not to.
+  -- Then get details on the former set.
+  
+  cL ("Found " ++ (show $ length changed_issues) ++ " Changed issues.")
+  cL ("Writing to files: " ++ (
+                        intercalate "," (map (ifPath . fst) $ changed_issues_byfile)))
 
   -- For each changed file, load it up, update the issue->nodes, and
   -- then re-write the files.
   if write
-    then do putStrLn ("Writing to files: " ++ (
-                         intercalate "," (map (ifPath . snd) $
-                                          map head changed_issues_byfile)))
-            mapM_ (updateIssueFile verbose) changed_issues_byfile
+    then do mapM_ (\(f, iss) -> updateIssueFile True f iss) changed_issues_byfile
     else return ()
 
-  if verbose
-    then do putStrLn $ "Found " ++ (show $ length new_issues) ++ " new issues"
-            -- showDuplicateIssues dup_existing_issues existing_issue_filelist
-            putStr $ "Existing issues:\n  "
-            putStrLn $ printIssues existing_issues
-            putStr $ "Issues found from queries:\n  "
-            putStrLn $ printIssues found_issues
-            putStr $ "New Issues:\n  "
-            putStrLn $ printIssues new_issues
-    else return ()
+  -- showDuplicateIssues dup_file_issues existing_issue_filelist
+  cL $ "\n>> " ++ (show $ length file_issues) ++ " existing issues [file]:"
+  cL $ printIssues kWidth file_issues
+  cL $ "\n>> " ++ (show $ length repo_issues) ++ " issues found in queries [repo]:"
+  cL $ printIssues kWidth repo_issues
+  cL $ "\n>> " ++ (show $ length new_issues) ++ " new issues [new]:"
+  cL $ printIssues kWidth new_issues
 
   if write
-    then do putStrLn $ "Writing issues to " ++ output
+    then do cL $ "Writing issues to " ++ output
             appendIssues output $ map issueof new_issues
     else return ()
   return ()

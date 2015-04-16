@@ -67,7 +67,7 @@ library
                        github, configurator, unordered-containers, text, old-locale,
                        regex-posix, exceptions, Glob, hashable, time, tagsoup, HTF, syb,
                        QuickCheck, hspec, containers, random, http-types, http-conduit, aeson,
-                       bytestring, directory, Glob
+                       bytestring, directory, Glob, terminal-size
 
   if flag(network-uri)
      build-depends: network-uri >= 2.6, network >= 2.6
@@ -91,7 +91,7 @@ executable sync-issues
                       github, configurator, unordered-containers, text, old-locale,
                       regex-posix, exceptions, Glob, hashable, time, tagsoup, HTF, 
                       syb, random, http-types, http-conduit, aeson, bytestring, 
-                      directory, Glob
+                      directory, Glob, terminal-size
 
   -- Other library packages from which modules are imported.
   if flag(network-uri)
@@ -119,7 +119,7 @@ executable test-parse
                       github, configurator, unordered-containers, text, old-locale,
                       regex-posix, exceptions, Glob, hashable, time, tagsoup, HTF, 
                       syb, random, http-types, http-conduit, aeson, bytestring, 
-                      directory, Glob, Diff
+                      directory, Glob, Diff, terminal-size
 
   -- Other library packages from which modules are imported.
   if flag(network-uri)
