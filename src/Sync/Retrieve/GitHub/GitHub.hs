@@ -130,6 +130,9 @@ makeAuth :: Maybe String -> Maybe GA.GithubAuth
 makeAuth Nothing = Nothing
 makeAuth (Just s) = Just $ GA.GithubOAuth s
 
+fetchIssue :: Maybe String -> String -> String -> Int -> IO (Issue)
+fetchIssue = undefined
+
 fetchDetails :: Maybe String -> String -> String -> Issue -> IO (Issue)
 fetchDetails tok user repo issue = do
   let auth = makeAuth tok
@@ -137,7 +140,7 @@ fetchDetails tok user repo issue = do
   eventList <- loadIssueEvents auth user repo issuenum
   commentList <- loadIssueComments auth user repo issuenum
   -- assume that the issue already has the initial comment.
-  return issue { events = (events issue) ++ (sort eventList ++ commentList) }
+  return $ issue { events = (events issue) ++ (sort eventList ++ commentList) }
 
 fetch :: Maybe String -> String -> String -> Maybe IssueStatus -> [String] -> IO [Issue]
 fetch tok user repo stat tags = do
