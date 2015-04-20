@@ -2,8 +2,6 @@
 import qualified Data.Configurator as DC
 import qualified Data.Configurator.Types as DCT
 import qualified Data.Text as T
-import qualified Sync.Retrieve.GoogleCode.GoogleCode as GC
-import qualified Sync.Retrieve.GitHub.GitHub as GH
 import qualified Data.HashMap.Strict as HM
 import OrgSync
 import Sync.Retrieve

@@ -7,8 +7,6 @@ import qualified Data.Configurator as DC
 import qualified Data.Configurator.Types as DCT
 import qualified Data.Text as T
 import qualified Data.Set as S
-import qualified Sync.Retrieve.GoogleCode.GoogleCode as GC
-import qualified Sync.Retrieve.GitHub.GitHub as GH
 import qualified System.Console.Terminal.Size as TS
 import Sync.Retrieve
 import Control.Monad (join, foldM)
@@ -130,7 +128,7 @@ loadIssuesFromConfiguration runcfg = do
         let raw_issues = map fst $ ovElements $ ifDoc issuefile
         in map (LoadedIssue save issuefile) raw_issues
       existing_issues = concatMap (getIssues True) (
-        (nub $ sort raw_existing_issues) \\ (nub $ sort raw_stub_files))
+        (nub $ sort raw_existing_issues) \\ (nub $ sort raw_stub_issues))
       stub_issues = concatMap (getIssues False) (nub $ sort raw_stub_issues)
       issue_map :: HS.HashSet InputIssue
       issue_map = foldl (flip HS.insert) (HS.fromList existing_issues) existing_issues

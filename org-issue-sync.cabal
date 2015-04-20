@@ -57,7 +57,7 @@ flag network-uri
 library
   exposed-modules:     Data.OrgMode, Data.OrgMode.Text, Data.OrgMode.Doc,
                        Data.OrgMode.OrgDocView, Sync.Retrieve.GitHub.GitHub,
-                       Sync.Retrieve.GoogleCode.GoogleCode, Data.Issue,
+                       Sync.Retrieve.Google.Code, Data.Issue,
                        Data.OrgIssue
 
   hs-source-dirs:      src

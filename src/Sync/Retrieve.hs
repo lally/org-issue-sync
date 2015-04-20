@@ -5,7 +5,7 @@ import Data.Issue
 import Data.List
 import qualified Data.HashMap.Strict as HM
 
-import qualified Sync.Retrieve.GoogleCode.GoogleCode as GC
+import qualified Sync.Retrieve.Google.Code as GC
 import qualified Sync.Retrieve.GitHub.GitHub as GH
 
 data GoogleCodeSource = GoogleCodeSource
@@ -137,7 +137,7 @@ loadGHSource oauth existing src = do
       -- updates on issues we'e discovered that no longer fit our
       -- fetch (e.g., tags) criteria?  Or are they definitionally
       -- irrelevant?
-      updateIssue (LoadedIssue _ _ _) = False
+      updateIssue (LoadedIssue upd fl _) iss = LoadedIssue upd fl iss
       getDetails inp_iss = do
         let iss = issueof inp_iss
             (user, slashproj) = break (== '/') $ origin iss

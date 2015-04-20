@@ -1,7 +1,7 @@
-module Sync.Retrieve.GoogleCode.GoogleCode where
+module Sync.Retrieve.Google.Code where
 
 import qualified Data.Csv as CSV
-import Sync.Retrieve.GoogleCode.Parse
+import Sync.Retrieve.Google.Code.Parse
 import Data.Char (toLower, isSpace, ord, isAlphaNum)
 import Data.Vector (Vector, toList)
 import Data.ByteString.Lazy.Char8 (pack)
