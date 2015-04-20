@@ -80,15 +80,17 @@ match_set set iss =
   in case HM.lookup k_iss set of
     Just old_iss -> HM.insert k_iss (mergeIssue iss old_iss) set
     Nothing -> set
+
 fetched (_, LoadedIssue _ _ _) = False
 fetched _ = True
+
 want_details (FetchedIssue _) = True
+want_details (MergedIssue _ _ _ upd) = upd
 -- So, these are issues we didn't find in a fetch.  Do we want
 -- to keep getting any details on them at all?  If they're in a
 -- stub file, we may still want to know if they're closed,
 -- right?  Yes.
 want_details (LoadedIssue upd _ _) = upd
-want_details (MergedIssue _ _ _ upd) = upd
 
 mergeFetchedWithLoaded :: [InputIssue] -> [InputIssue] -> [InputIssue]
 mergeFetchedWithLoaded existing new =
@@ -107,10 +109,6 @@ loadGCSource existing src = do
 -- we have new data, and FetchedIssue added for new issues.
 loadGHSource :: Maybe String -> [InputIssue] -> GitHubSource -> IO ([InputIssue])
 loadGHSource oauth existing src = do
-  -- TODO: we currently don't see issues that we'd loaded before that
-  -- have since CLOSED.  Do a second fetch here, (Just Closed), with the
-  -- tags, to see if any of the ones in |existing| that weren't in the
-  -- first fetch show up in the second.
   let (GitHubSource user project tags) = src
       origin_str = user ++ "/" ++ project
       (gh_issues, others) = partition (
@@ -122,6 +120,10 @@ loadGHSource oauth existing src = do
       paired_issues = map (\i -> (issueof i, i)) gh_issues
       open_merged = foldl update_set (HM.fromList paired_issues) all_open
       missing_from_fetch = filter (not . fetched) $ HM.toList open_merged
+  -- Won't see issues that we'd loaded before that have since CLOSED.
+  -- Do a second fetch here, (Just Closed), with the tags, to see if
+  -- any of the ones in |existing| that weren't in the first fetch
+  -- show up in the second.
   raw_all_closed <- GH.fetch oauth user project (Just Closed) tags
 
   let all_closed = map FetchedIssue raw_all_closed
@@ -131,8 +133,11 @@ loadGHSource oauth existing src = do
         map snd ((HM.toList open_merged) ++ (HM.toList closed_merged))
       updateIssue (FetchedIssue _) iss = FetchedIssue iss
       updateIssue (MergedIssue f li lf lup) iss = MergedIssue iss li lf lup
-      -- Intentionally, no updateIssue (LoadedIssue _ _ _), as we
-      -- shouldn't be getting updates on them.
+      -- We may want to make this a policy option: should we get some
+      -- updates on issues we'e discovered that no longer fit our
+      -- fetch (e.g., tags) criteria?  Or are they definitionally
+      -- irrelevant?
+      updateIssue (LoadedIssue _ _ _) = False
       getDetails inp_iss = do
         let iss = issueof inp_iss
             (user, slashproj) = break (== '/') $ origin iss

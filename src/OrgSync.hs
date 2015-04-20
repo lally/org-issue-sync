@@ -115,9 +115,9 @@ updateIssueFile verbose file issuelist = do
   commentLn verbose $ "** Rewriting " ++ path ++ " for " ++ num_issues ++ " issues."
   writeFile path (generateIssueFileText file issuelist)
 
--- PLAN: Load in stubs and then merge them into into a hash set,
--- replacing any existing ones there.  I just need a replacing
--- insertion operator, which is just HM.insert.
+-- Load in files to scan, and stubs to ignore.  Note that ignore files
+-- take precedence, so if a file is in both scan and ignore, the
+-- issues in that file will be ignored.
 loadIssuesFromConfiguration :: RunConfiguration -> IO [InputIssue]
 loadIssuesFromConfiguration runcfg = do
   let orig_scan_files = rcScanFiles runcfg
@@ -129,8 +129,9 @@ loadIssuesFromConfiguration runcfg = do
   let getIssues save issuefile =
         let raw_issues = map fst $ ovElements $ ifDoc issuefile
         in map (LoadedIssue save issuefile) raw_issues
-      existing_issues = concatMap (getIssues True) raw_existing_issues
-      stub_issues = concatMap (getIssues False) raw_stub_issues
+      existing_issues = concatMap (getIssues True) (
+        (nub $ sort raw_existing_issues) \\ (nub $ sort raw_stub_files))
+      stub_issues = concatMap (getIssues False) (nub $ sort raw_stub_issues)
       issue_map :: HS.HashSet InputIssue
       issue_map = foldl (flip HS.insert) (HS.fromList existing_issues) existing_issues
   return $ nub $ sort $ HS.toList issue_map
