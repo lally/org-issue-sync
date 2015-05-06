@@ -37,7 +37,8 @@ convertIssue origin iss =
         | otherwise = '_'
       cleanTag tag = map cleanChar tag
       cleanTags = map cleanTag tags
-  in Issue origin (GD.issueNumber iss) userName status cleanTags (strip $ GD.issueTitle iss) "github" []
+  in (Issue origin (GD.issueNumber iss) userName status cleanTags
+      (strip $ GD.issueTitle iss) "github" [])
 
 wrapEvent :: GD.Event -> IssueEventDetails -> IssueEvent
 wrapEvent event details =
@@ -108,7 +109,7 @@ loadIssueEvents oauth user repo issnum = do
                                                show (statusMessage st)
           _ -> "HTTP Connection Error (unknown status code): " ++ show ex
       classifyError err = show err
-  res <- GIE.eventsForIssue user repo issnum
+  res <- GIE.eventsForIssue' oauth user repo issnum
   case res of
     Left err -> do
       putStrLn (user ++ "/" ++ repo ++ ": issue " ++ (
@@ -126,16 +127,18 @@ makeIssueComment issue =
       createDate = GD.fromGithubDate $ GD.issueCreatedAt issue
   in IssueEvent createDate userName (IssueComment (maybe "" id (GD.issueBody issue)))
 
-makeAuth :: Maybe String -> Maybe GA.GithubAuth
-makeAuth Nothing = Nothing
-makeAuth (Just s) = Just $ GA.GithubOAuth s
+fetchIssue :: Maybe String -> String -> String -> Int -> IO (Maybe Issue)
+fetchIssue tok user repo issuenum = do
+  let auth = fmap GA.GithubOAuth tok
+  res <- GI.issue' auth user repo issuenum
+  case res of
+    Left err -> do putStrLn $ show err; return Nothing
+    Right issue -> return $ Just $ convertIssue (user ++ "/" ++ repo ) issue
 
-fetchIssue :: Maybe String -> String -> String -> Int -> IO (Issue)
-fetchIssue = undefined
 
 fetchDetails :: Maybe String -> String -> String -> Issue -> IO (Issue)
 fetchDetails tok user repo issue = do
-  let auth = makeAuth tok
+  let auth = fmap GA.GithubOAuth tok
       issuenum = number issue
   eventList <- loadIssueEvents auth user repo issuenum
   commentList <- loadIssueComments auth user repo issuenum
@@ -144,9 +147,7 @@ fetchDetails tok user repo issue = do
 
 fetch :: Maybe String -> String -> String -> Maybe IssueStatus -> [String] -> IO [Issue]
 fetch tok user repo stat tags = do
-  let auth = case tok of
-        Nothing -> Nothing
-        Just s -> Just $ GA.GithubOAuth s
+  let auth = fmap GA.GithubOAuth tok
       statusLim = case stat of
         Just Open -> [GI.Open]
         Just Closed -> [GI.OnlyClosed]

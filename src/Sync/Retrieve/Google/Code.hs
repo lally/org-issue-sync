@@ -27,7 +27,7 @@ parseFile file =
         CSV.decDelimiter = fromIntegral (ord ',') }
   in CSV.decodeWith myOptions CSV.HasHeader $ pack file
 
-
+-- TODO(lally): Make fetchDetails return a full Issue.
 fetchDetails :: String -> Int -> IO [IssueEvent]
 fetchDetails repo issueNum = do
   let openURL x = getResponseBody =<< simpleHTTP (getRequest x)

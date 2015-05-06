@@ -24,30 +24,13 @@ import System.FilePath.Glob
 -- Config Format:
 -- scan_files = ["~/org/*.org"]
 -- output_file = "./test.org"
--- github {
---   uproxy {
---      api_key = "" -- still unused.
---      projects = {
---        uproxy {
---          tags = []
---        }
---      }
---   }
---   freedomjs {
---      api_key = "" -- still unused.
---      projects = {
---        freedom-for-chrome {
---          tags = []
---        }
---      }
---   }
--- }
 --
 -- google-code {
 --   webrtc {
 --     terms = [["sctp"], ["datachannel"]]
 --   }
 -- }
+--
 
 data CommandOptions = Options
                       { optPrintConfig :: Bool
@@ -152,9 +135,11 @@ loadConfig config = do
                else return Nothing
   let gh_list = loadGHSources configmap
       gc_list = loadGCSources configmap
+      gt_list = loadGTSources configmap
       gh_auth = fmap T.unpack github_oauth
   return $ RunConfiguration <$> file_list <*> stub_list <*> output_file <*>
-    (pure gh_auth) <*> (pure gh_list) <*> (pure gc_list) <*> (pure cache_dir)
+    (pure gh_auth) <*> (pure gh_list) <*> (pure gc_list) <*>
+    (pure gt_list) <*> (pure cache_dir)
 
 getImmediateChildren :: HM.HashMap DCT.Name DCT.Value -> [T.Text]
 getImmediateChildren hmap = nub $ map (T.takeWhile (/= '.')) $ HM.keys hmap
@@ -205,6 +190,18 @@ loadGCSources config =
            else [makeGC []]
   in concatMap getRepoData repos
 
+{-
+ github {
+  auth_token = ""
+   repo {
+      projects = {
+        project {
+          tags = []
+        }
+      }
+   }
+ }
+-}
 loadGHSources :: HM.HashMap DCT.Name DCT.Value -> [GitHubSource]
 loadGHSources config =
   let repos = getChildrenOf config "github.projects"
@@ -227,6 +224,28 @@ loadGHSources config =
            then map makeGH tags
            else [makeGH []]
   in concatMap getRepoData repos
+
+
+{-
+ Parses a single google-tasks block.
+ google-tasks {
+   oauth-file = "filename.auth"
+   user = "gmail@user.account"
+   lists = ["*"]
+   tag = "TASK"
+ }
+-}
+loadGTSources :: HM.HashMap DCT.Name DCT.Value -> [GoogleTasksSource]
+loadGTSources config =
+  let oauth :: Maybe FilePath
+      oauth = (HM.lookup "google-tasks.oauth_file" config) >>= DCT.convert
+      key s = T.append "google-tasks." s
+      user = (HM.lookup "google-tasks.user" config) >>= DCT.convert
+      patterns :: Maybe [String]
+      patterns = fmap valToList $ HM.lookup (key ".lists") config
+      sources = [GoogleTasksSource <$> (fmap T.unpack user) <*> (pure oauth) <*>
+                 patterns]
+  in mapMaybe id sources
 
 loadFileGlob :: Maybe [String] -> IO (Maybe [FilePath])
 loadFileGlob pats =

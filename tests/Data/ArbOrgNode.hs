@@ -63,12 +63,13 @@ arbLine depth lineno = do
   chars <- arbitraryText depth
   return (TextLine depth chars lineno)
 
+-- |Makes at least 2 characters.
 arbIdentifier :: Gen String
 arbIdentifier = do
   let id_start_letters = ['A'..'Z'] ++ ['a'..'z'] ++ ['_']
       id_rest_letters = id_start_letters ++ ['0'..'9']
   first_letter <- elements id_start_letters
-  restid <- listOf (elements id_rest_letters)
+  restid <- listOf1 (elements id_rest_letters)
   return (first_letter:restid)
 
 arbDrawer :: LineNumber -> Bool -> Gen Drawer

@@ -57,17 +57,17 @@ flag network-uri
 library
   exposed-modules:     Data.OrgMode, Data.OrgMode.Text, Data.OrgMode.Doc,
                        Data.OrgMode.OrgDocView, Sync.Retrieve.GitHub.GitHub,
-                       Sync.Retrieve.Google.Code, Data.Issue,
-                       Data.OrgIssue
+                       Sync.Retrieve.Google.Code, Sync.Retrieve.Google.Tasks,
+                       Data.Issue, Data.OrgIssue
 
   hs-source-dirs:      src
   build-depends:       base >=4.7 && <4.8, HTTP >= 4000, cassava >= 0.4.2.0,
                        bytestring >= 0.10, vector >= 0.10, split >= 0.2.2,
                        containers >= 0.5, HStringTemplate >= 0.7.3, parsec,
-                       github, configurator, unordered-containers, text, old-locale,
+                       github >= 0.13.2, configurator, unordered-containers, text, old-locale,
                        regex-posix, exceptions, Glob, hashable, time, tagsoup, HTF, syb,
                        QuickCheck, hspec, containers, random, http-types, http-conduit, aeson,
-                       bytestring, directory, Glob, terminal-size
+                       bytestring, directory, Glob, terminal-size, google-oauth2
 
   if flag(network-uri)
      build-depends: network-uri >= 2.6, network >= 2.6
@@ -88,10 +88,10 @@ executable sync-issues
   build-depends:      org-issue-sync, base >=4.7 && <4.8, HTTP >= 4000, cassava >= 0.4.2.0,
                       bytestring >= 0.10, vector >= 0.10, split >= 0.2.2,
                       containers >= 0.5, HStringTemplate >= 0.7.3, parsec,
-                      github, configurator, unordered-containers, text, old-locale,
+                      github >= 0.13.2, configurator, unordered-containers, text, old-locale,
                       regex-posix, exceptions, Glob, hashable, time, tagsoup, HTF, 
                       syb, random, http-types, http-conduit, aeson, bytestring, 
-                      directory, Glob, terminal-size
+                      directory, Glob, terminal-size, google-oauth2
 
   -- Other library packages from which modules are imported.
   if flag(network-uri)
@@ -116,10 +116,10 @@ executable test-parse
   build-depends:      org-issue-sync, base >=4.7 && <4.8, HTTP >= 4000, cassava >= 0.4.2.0,
                       bytestring >= 0.10, vector >= 0.10, split >= 0.2.2,
                       containers >= 0.5, HStringTemplate >= 0.7.3, parsec,
-                      github, configurator, unordered-containers, text, old-locale,
+                      github >= 0.13.2, configurator, unordered-containers, text, old-locale,
                       regex-posix, exceptions, Glob, hashable, time, tagsoup, HTF, 
                       syb, random, http-types, http-conduit, aeson, bytestring, 
-                      directory, Glob, Diff, terminal-size
+                      directory, Glob, Diff, terminal-size, google-oauth2
 
   -- Other library packages from which modules are imported.
   if flag(network-uri)
@@ -140,10 +140,11 @@ Test-Suite spec
   build-depends:     base >=4.7 && <4.8, HTTP >= 4000, cassava >= 0.4.2.0,
                      bytestring >= 0.10, vector >= 0.10, split >= 0.2.2,
                      containers >= 0.5, HStringTemplate >= 0.7.3, parsec,
-                     github, configurator, unordered-containers, text, old-locale,
+                     github >= 0.13.2, configurator, unordered-containers, text, old-locale,
                      regex-posix, exceptions, Glob, hashable, time, tagsoup,
                      QuickCheck, hspec >= 1.3, containers, random, HTF, syb,
-                     http-types, http-conduit, aeson, bytestring, directory, Glob
+                     http-types, http-conduit, aeson, bytestring, directory, Glob,
+                     google-oauth2
 
   if flag(network-uri)
      build-depends: network-uri >= 2.6, network >= 2.6
