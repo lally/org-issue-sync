@@ -66,7 +66,7 @@ loadOrgIssues file = do
 -- get terminal width, etc.
 printIssues :: Int -> [InputIssue] -> String
 printIssues width inpissues =
-  let issues = map issueof inpissues
+  let issues = map issueOf inpissues
       byType = aggregateBy iType issues
       byTypeAndRepo = map (\(t, iss) -> (t, aggregateBy origin iss)) byType
       printIssueList :: String -> [Int] -> String
@@ -98,7 +98,7 @@ loadIssueFile path = do
 generateIssueFileText :: IssueFile -> [InputIssue] -> String
 generateIssueFileText _ [] = ""
 generateIssueFileText file issuelist =
-  let issueSet = S.fromList $ map issueof issuelist
+  let issueSet = S.fromList $ map issueOf issuelist
       origDoc = ifDoc file
       newDoc = updateDoc issueSet origDoc
   in (intercalate "\n" $ map tlText $ getTextLines newDoc) ++ "\n"
@@ -156,7 +156,7 @@ fetchIssues runcfg verbose existing = do
 
   if isJust $ rcCache runcfg
     then do let (Just store) = rcCache runcfg
-            mapM (saveIssue store) $ map issueof foundIssues
+            mapM (saveIssue store) $ map issueOf foundIssues
             cL $ "Saved " ++ (show $ length foundIssues) ++ " issues to cache"
     else return ()
   return foundIssues
@@ -198,7 +198,8 @@ runConfiguration runcfg options = do
                        rawIss <- loadAllIssues cache
                        let issues = map FetchedIssue $ nub $ sort rawIss
                        cL  $ "Loaded " ++ (show $ length issues) ++
-                             " issues from cache:\n" ++ (printIssues kWidth issues)
+                             " issues from cache:\n" ++ (
+                               printIssues kWidth issues)
                        return issues
                      else return []
 
@@ -227,7 +228,7 @@ runConfiguration runcfg options = do
         where
           makeMerge f =
             MergedIssue fIss (liIssue f) (liFile f) (liUpdate f)
-            where fIss = issueof $ fromJust $ find (eqIssue f) repoIssues
+            where fIss = issueOf $ fromJust $ find (eqIssue f) repoIssues
 
   let fileOf (MergedIssue _ _ f _) = f
       shouldUpdate (file, issues) = any wantAnyUpdate issues
@@ -248,14 +249,15 @@ runConfiguration runcfg options = do
 
   cL $ "\n>> " ++ (show $ length fileIssues) ++ " existing issues [file]:"
   cL $ printIssues kWidth fileIssues
-  cL $ "\n>> " ++ (show $ length repoIssues) ++ " issues found in queries [repo]:"
+  cL $ "\n>> " ++ (show $ length repoIssues) ++
+    " issues found in queries [repo]:"
   cL $ printIssues kWidth repoIssues
   cL $ "\n>> " ++ (show $ length newIssues) ++ " new issues [new]:"
   cL $ printIssues kWidth newIssues
 
   if write
     then do cL $ "Writing issues to " ++ output
-            appendIssues output $ map issueof newIssues
+            appendIssues output $ map issueOf newIssues
     else return ()
   return ()
 

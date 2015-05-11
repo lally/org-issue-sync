@@ -5,6 +5,7 @@ import Data.OrgMode
 import Data.Issue
 import Data.List
 import Data.Maybe
+import Debug.Trace (trace)
 import qualified Data.HashMap.Strict as HM
 import qualified Sync.Retrieve.Google.Code as GC
 import qualified Sync.Retrieve.GitHub.GitHub as GH
@@ -51,9 +52,8 @@ data GoogleTasksSource = GoogleTasksSource
                          } deriving (Eq, Show)
 
 -- TODO(lally): Re-arch GoogleTasksSource to fit the
--- fetchList/fetchDetails model.  instance LoadableSource
--- GoogleTasksSource where
-
+-- fetchList/fetchDetails model.
+-- instance LoadableSource GoogleTasksSource where
 
 data IssueFile = IssueFile
                  { ifPath :: FilePath
@@ -67,6 +67,7 @@ instance Ord IssueFile where
 
 instance Show IssueFile where
   show = ifPath
+
 
 -- |We get issues from multiple sources, track that, and their states.
 data InputIssue = FetchedIssue { fiIssue :: Issue } -- ^From a network source.
@@ -85,27 +86,27 @@ data InputIssue = FetchedIssue { fiIssue :: Issue } -- ^From a network source.
                               }
                 deriving (Show)
 
-issueof :: InputIssue -> Issue
-issueof (FetchedIssue fi) = fi
-issueof (LoadedIssue _ _ is) = is
-issueof (MergedIssue fi _ _ _) = fi
+issueOf :: InputIssue -> Issue
+issueOf (FetchedIssue fi) = fi
+issueOf (LoadedIssue _ _ is) = is
+issueOf (MergedIssue fi _ _ _) = fi
 
 instance Hashable InputIssue where
-  hashWithSalt i s = hashWithSalt i (issueof s)
+  hashWithSalt i s = hashWithSalt i (issueOf s)
 
 instance Eq InputIssue where
-  a == b = issueof a == issueof b
+  a == b = issueOf a == issueOf b
 
-eqIssue a b = issueof a == issueof b
+eqIssue a b = issueOf a == issueOf b
 
 instance Ord InputIssue where
-  compare a b = compare (issueof a) (issueof b)
+  compare a b = compare (issueOf a) (issueOf b)
 
 
 -- |Updates an existing issue in a set of them, merging in |iss|.
 updateSet :: HM.HashMap Issue InputIssue -> InputIssue -> HM.HashMap Issue InputIssue
 updateSet set iss =
-  let kIss = issueof iss
+  let kIss = issueOf iss
       -- Combine an issue we found in this fetch run with one we found
       -- before in a file load.  We shouldn't get Merged or Fetched
       -- issues on the RHS, as they should've been filtered out before
@@ -117,7 +118,7 @@ updateSet set iss =
     Nothing -> set
 
 wantDetails (FetchedIssue _) = True
-wantDetails (MergedIssue _ _ _ upd) = upd
+wantDetails (MergedIssue _ _ _ upd) = not upd
 -- So, these are issues we didn't find in a fetch.  Do we want
 -- to keep getting any details on them at all?  If they're in a
 -- stub file, we may still want to know if they're closed,
@@ -129,11 +130,12 @@ wantDetails li@(LoadedIssue upd _ iss) =
 -- is true for everything but a file with an :ARCHIVE: tag on it
 wantAnyUpdate (LoadedIssue _ _ iss) =
   not ("ARCHIVE" `elem` (tags iss))
+wantAnyUpdate (MergedIssue _ _ _ True) = False
 wantAnyUpdate _ = True
 
 mergeFetchedWithLoaded :: [InputIssue] -> [InputIssue] -> [InputIssue]
 mergeFetchedWithLoaded existing new =
-  let pairedIssues = map (\i -> (issueof i, i)) existing
+  let pairedIssues = map (\i -> (issueOf i, i)) existing
   in map snd $ HM.toList $ foldl updateSet (HM.fromList pairedIssues) new
 
 loadGCSource :: [InputIssue] -> GoogleCodeSource -> IO ([InputIssue])
@@ -156,33 +158,30 @@ fetchIssue s oauth (LoadedIssue True file iss) = do
 fetchIssue s oauth (MergedIssue fi ld fl False) = do
   updIss <- fetchDetails oauth s fi
   return $ MergedIssue (fromJust updIss) (fromJust updIss) fl True
+fetchIssue s oauth mi@(MergedIssue fi ld fl True) = do
+  putStrLn $ "Warning: attempted to fetch a previously-updated issue: " ++ (
+    show ld)
+  return mi
 
--- |Load GitHub sources, given an |oauth| token, a GitHubSource
--- (|src|), and a list of existing issues.  Returns an updated version
--- of |existing| with MergedIssue elements replacing LoadedIssues when
--- we have new data, and FetchedIssue added for new issues.
+-- | Load data from a source, given an |oauth| token, a |src|, and a
+-- list of |allExisting| values.  Assumes that any issue in
+-- allExisting that should have been updated is already updated.
+-- Returns an updated version of |allExisting| with MergedIssue
+-- elements replacing LoadedIssues when we have new data, and
+-- FetchedIssue added for new issues.
 loadSource :: (LoadableSource s) => Maybe String -> [InputIssue] -> s -> IO ([InputIssue])
 loadSource oauth allExisting src = do
-  let (existing, nonMembers) = partition (\i -> isMember src $ issueof i) allExisting
+  -- Generally, get a list of issues from fetchList, and fetchDetails on them.
+  -- Ignore to the get-details list:
+  --  Any in the list that were in allExisting and previouslyFetched.
+  -- Add to the get-details list:
+  --  Any that we saw in allExisting that were both relevant and not previouslyFetched.
+  let (existing, nonMembers) = partition (\i -> isMember src $ issueOf i) allExisting
+      (loadedExisting, unloadedExisting) = partition previouslyFetched existing
+      plist s = (show $ length s) ++ ": " ++ (intercalate ", " $ map show s)
   incoming <- mapM (return . FetchedIssue) =<< fetchList oauth src
-  -- Break issues up into dup, new, merge, and orphans.
-  -- We come in with a set of Existing issues, which get categorized
-  -- into Merge or Orphan
-  -- New: Returned as FetchedIssue, with details.
-  -- Dup: Came in as a FetchedIssue, and we don't need to do anything to it.
-  -- Merge: Fetch details if |wantDetails|
-  -- Orphan: Do full fetch if |wantAnyUpdate|.  We still get
-  --         details, but have a lower bar for doing so.
-  let dup = intersect incoming $ filter previouslyFetched existing
-      new = incoming \\ existing
-      (merges, orphans) =
-        partition previouslyFetched $ map snd combined
-        where
-          combined = HM.toList $ foldl updateSet pExisting (incoming \\ dup)
-          pExisting = HM.fromList $ map (\i -> (issueof i, i)) existing
-      (updOrphans, ignOrphans) = partition wantDetails orphans
+  let new = incoming \\ loadedExisting
+      orphans = unloadedExisting
   fetchedNew <- mapM (fetchIssue src oauth) new
-  fetchedMerges <- mapM (fetchIssue src oauth) merges
   fetchedOrphans <- mapM (fetchIssue src oauth) orphans
-  return $ (fetchedNew ++ fetchedMerges ++ fetchedOrphans ++ dup ++
-            ignOrphans ++ nonMembers)
+  return (nonMembers ++ loadedExisting ++ fetchedNew ++ fetchedOrphans)
