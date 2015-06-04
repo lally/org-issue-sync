@@ -142,22 +142,31 @@ loadIssuesFromConfiguration runcfg = do
 fetchIssues runcfg verbose existing = do
   let githubAuth = rcGitHubOAuth runcfg
       github = rcGitHubSources runcfg
-      googlecode = rcGoogleCodeSources runcfg
+      gcode = rcGoogleCodeSources runcfg
+      gtasks = rcGoogleTaskSources runcfg
   -- Load the issues from our sources
       cL = commentLn verbose
+      pcL p s = if p
+                then do commentLn verbose s
+                        return ()
+                else return ()
 
   cL $ "Loading from " ++ (show $ length github) ++ " GitHub queries..."
   postGhIssues <- foldM (loadSource githubAuth) existing github
 
-  cL $ "Loading from " ++ (show $ length googlecode) ++ " GoogleCode queries..."
-  postGcIssues <- foldM (loadSource Nothing) postGhIssues googlecode
+  cL $ "Loading from " ++ (show $ length gcode) ++ " Google Code queries..."
+  postGcIssues <- foldM (loadSource Nothing) postGhIssues gcode
 
-  let foundIssues = nub $ sort $ postGcIssues
+  cL $ "Loading from " ++ (show $ length gtasks) ++ " Google Tasks queries..."
+  pcL (length gtasks > 0) $ "Loading from Google Tasks..."
+  postGtIssues <- foldM (loadSource Nothing) postGcIssues gtasks
+  let foundIssues = nub $ sort $ postGtIssues
 
   if isJust $ rcCache runcfg
     then do let (Just store) = rcCache runcfg
+                n = (show $ length foundIssues)
             mapM (saveIssue store) $ map issueOf foundIssues
-            cL $ "Saved " ++ (show $ length foundIssues) ++ " issues to cache"
+            cL $ "Saved " ++ n ++ " issues to cache"
     else return ()
   return foundIssues
 
@@ -175,8 +184,6 @@ aggregateBy f elems =
 runConfiguration :: RunConfiguration -> RunOptions -> IO ()
 runConfiguration runcfg options = do
   let output = rcOutputFile runcfg
-      github = rcGitHubSources runcfg
-      googlecode = rcGoogleCodeSources runcfg
       (RunOptions fetch write verbose update) = options
       haveCache = isJust $ rcCache runcfg
       cL = commentLn verbose

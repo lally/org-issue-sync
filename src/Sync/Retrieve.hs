@@ -1,13 +1,17 @@
 module Sync.Retrieve where
-import Control.Monad
-import Data.Hashable
 import Data.OrgMode
 import Data.Issue
+
+import Control.Monad
+import Data.Hashable
 import Data.List
 import Data.Maybe
 import Debug.Trace (trace)
+
+import qualified Network.Google.OAuth2 as OA
 import qualified Data.HashMap.Strict as HM
 import qualified Sync.Retrieve.Google.Code as GC
+import qualified Sync.Retrieve.Google.Tasks as GT
 import qualified Sync.Retrieve.GitHub.GitHub as GH
 
 class LoadableSource s where
@@ -44,16 +48,41 @@ instance LoadableSource GitHubSource where
   fetchDetails oauth ghs iss =
     liftM Just $ GH.fetchDetails oauth (ghUser ghs) (ghProject ghs) iss
 
-data GoogleTasksSource = GoogleTasksSource
-                         { gtUser :: String
-                         , gtOAuthFile :: Maybe FilePath
-                           -- ^ May be inherited.
-                         , gtListPatterns :: [String]
-                         } deriving (Eq, Show)
 
--- TODO(lally): Re-arch GoogleTasksSource to fit the
--- fetchList/fetchDetails model.
--- instance LoadableSource GoogleTasksSource where
+data GoogleTasksSource = GoogleTasksSource
+                         { gtAlias :: String
+                         , gtUser :: String
+                         , gtOAuthFile :: Maybe FilePath
+                         , gtClient :: OA.OAuth2Client
+                         , gtListPatterns :: [String]
+                         } deriving (Show)
+
+authClientEq a b = (OA.clientId a) == (OA.clientId b) &&
+                   (OA.clientSecret a) == (OA.clientSecret b)
+
+instance Eq GoogleTasksSource where
+  (==) a b =
+    (gtAlias a) == (gtAlias b) &&
+    (gtUser a) == (gtUser b) &&
+    (gtOAuthFile a) == (gtOAuthFile b) &&
+    authClientEq (gtClient a) (gtClient b) &&
+    (gtListPatterns a) == (gtListPatterns b)
+
+instance LoadableSource GoogleTasksSource where
+  isMember ts iss =
+    iType iss == "google-tasks" && (gtUser ts == user iss)
+  fetchList oauth gts = do
+    -- This oauth arg is awful, and just for github.  ugh.
+    -- TODO: replace with a larger type that can handle all our auth
+    -- needs (including inheritance, etc), and then lookup what I need
+    -- here.
+    let auth = gtOAuthFile gts
+        client = gtClient gts
+    lists <- GT.getLists auth client (gtListPatterns gts)
+    all <- mapM (\list -> GT.getList auth client (gtUser gts) list) lists
+    return $ concat all
+  fetchDetails auth gts iss =
+    return $ Just iss
 
 data IssueFile = IssueFile
                  { ifPath :: FilePath
@@ -84,12 +113,23 @@ data InputIssue = FetchedIssue { fiIssue :: Issue } -- ^From a network source.
                               , loadedUpdate :: Bool
                                 -- ^If it's been updated with details.
                               }
-                deriving (Show)
 
 issueOf :: InputIssue -> Issue
 issueOf (FetchedIssue fi) = fi
 issueOf (LoadedIssue _ _ is) = is
 issueOf (MergedIssue fi _ _ _) = fi
+
+showIssue (Issue _ n _ _ _ _ _ es) =
+  (show n) ++ "/" ++ (show $ length es)
+
+instance Show InputIssue where
+  show (FetchedIssue f) = "F<" ++ (showIssue f) ++ ">"
+  show (LoadedIssue u fl is) =
+    "L<" ++ upd ++ "," ++ (showIssue is) ++ ">"
+    where upd = if u then "y" else "n"
+  show (MergedIssue f l _ u) =
+    "M[F<" ++ (showIssue f) ++ ">, L<" ++ (showIssue l) ++ "> " ++ upd ++ "]"
+    where upd = if u then "U" else "_"
 
 instance Hashable InputIssue where
   hashWithSalt i s = hashWithSalt i (issueOf s)
@@ -152,9 +192,12 @@ fetchIssue :: (LoadableSource s) => s -> Maybe String -> InputIssue -> IO (Input
 fetchIssue s oauth (FetchedIssue iss) = do
   updIss <- fetchDetails oauth s iss
   return $ FetchedIssue (fromJust updIss)
+fetchIssue s oauth li@(LoadedIssue False _ _) = do
+  -- Don't update, just return what we took in.
+  return li
 fetchIssue s oauth (LoadedIssue True file iss) = do
   updIss <- fetchDetails oauth s iss
-  return $ LoadedIssue True file (fromJust updIss)
+  return $ MergedIssue (fromJust updIss) iss file True
 fetchIssue s oauth (MergedIssue fi ld fl False) = do
   updIss <- fetchDetails oauth s fi
   return $ MergedIssue (fromJust updIss) (fromJust updIss) fl True
@@ -178,7 +221,6 @@ loadSource oauth allExisting src = do
   --  Any that we saw in allExisting that were both relevant and not previouslyFetched.
   let (existing, nonMembers) = partition (\i -> isMember src $ issueOf i) allExisting
       (loadedExisting, unloadedExisting) = partition previouslyFetched existing
-      plist s = (show $ length s) ++ ": " ++ (intercalate ", " $ map show s)
   incoming <- mapM (return . FetchedIssue) =<< fetchList oauth src
   let new = incoming \\ loadedExisting
       orphans = unloadedExisting

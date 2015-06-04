@@ -31,6 +31,7 @@ data Issue = Issue
              , tags :: [String]
              , summary :: String
              , iType :: String
+--             , iURL :: String
              , events :: [IssueEvent]
              } deriving (Show)
 

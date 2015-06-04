@@ -1,10 +1,7 @@
 {-# LANGUAGE BangPatterns, OverloadedStrings #-}
-import qualified Data.Configurator as DC
-import qualified Data.Configurator.Types as DCT
-import qualified Data.Text as T
-import qualified Data.HashMap.Strict as HM
 import OrgSync
 import Sync.Retrieve
+
 import Control.Applicative
 import Control.Monad (liftM2, liftM3, mplus, join)
 import Control.Monad.Catch (catchIOError)
@@ -20,6 +17,12 @@ import System.Environment (getArgs)
 import System.Exit
 import System.IO
 import System.FilePath.Glob
+
+import qualified Data.Configurator as DC
+import qualified Data.Configurator.Types as DCT
+import qualified Data.Text as T
+import qualified Data.HashMap.Strict as HM
+import qualified Network.Google.OAuth2 as OA
 
 -- Config Format:
 -- scan_files = ["~/org/*.org"]
@@ -85,7 +88,6 @@ options =
         "Diff scan_files against this file."
     ]
 
-
 describeConfiguration :: RunConfiguration -> IO ()
 describeConfiguration runcfg = do
   let scan_files = rcScanFiles runcfg
@@ -93,6 +95,7 @@ describeConfiguration runcfg = do
       output = rcOutputFile runcfg
       github = rcGitHubSources runcfg
       googlecode = rcGoogleCodeSources runcfg
+      googletasks = rcGoogleTaskSources runcfg
       descGithub (GitHubSource user project tags) =
         let tagstr = if length tags > 0
                      then " with tags " ++ (intercalate ", " tags)
@@ -102,6 +105,8 @@ describeConfiguration runcfg = do
         if length terms > 0
         then " with search terms " ++ (intercalate ", " terms)
         else "")
+      descGoogleTasks (GoogleTasksSource u _ _ _  lp) = u ++ "/" ++ (
+        intercalate "," lp)
   putStrLn $ "Will search for issues in these files:\n\t" ++ (
     intercalate "\n\t" scan_files)
   if length github > 0
@@ -112,6 +117,10 @@ describeConfiguration runcfg = do
     then do putStrLn $ "Will scan Google Code for these projects:\n\t" ++ (
               intercalate "\n\t" $ map descGoogleCode googlecode)
     else return ()
+  if length googletasks > 0
+     then do putStrLn $ "Will scan Google Tasks for these projects:\n\t" ++ (
+               intercalate "\n\t" $ map descGoogleTasks googletasks)
+     else return ()
   putStrLn $ "Will put new issues into " ++ output
 
 
@@ -141,9 +150,11 @@ loadConfig config = do
     (pure gh_auth) <*> (pure gh_list) <*> (pure gc_list) <*>
     (pure gt_list) <*> (pure cache_dir)
 
+-- | Returns immediate children of root.
 getImmediateChildren :: HM.HashMap DCT.Name DCT.Value -> [T.Text]
 getImmediateChildren hmap = nub $ map (T.takeWhile (/= '.')) $ HM.keys hmap
 
+-- | Returns immediate children of the given parent.
 getChildrenOf :: HM.HashMap DCT.Name DCT.Value -> T.Text -> [T.Text]
 getChildrenOf hmap parent =
   let prefix = parent `T.append` "."
@@ -194,10 +205,8 @@ loadGCSources config =
  github {
   auth_token = ""
    repo {
-      projects = {
-        project {
-          tags = []
-        }
+      project {
+        tags = []
       }
    }
  }
@@ -227,25 +236,42 @@ loadGHSources config =
 
 
 {-
- Parses a single google-tasks block.
+ Parses a google-tasks block.
  google-tasks {
-   oauth-file = "filename.auth"
-   user = "gmail@user.account"
-   lists = ["*"]
-   tag = "TASK"
+   gmail {
+     oauth-file = "filename.auth"
+     user = "gmail@user.account"
+     client-id = ""
+     client-secret = ""
+     lists = [[".*", "TAG1", "TAG2"], ["FooBar", "FOO", "BAR"]]
+   }
  }
+ TODO: make it keyed by user so that I can have many.
+  google-tasks { gmail@user.account { oauth-file = .. }}
 -}
 loadGTSources :: HM.HashMap DCT.Name DCT.Value -> [GoogleTasksSource]
 loadGTSources config =
-  let oauth :: Maybe FilePath
-      oauth = (HM.lookup "google-tasks.oauth_file" config) >>= DCT.convert
-      key s = T.append "google-tasks." s
-      user = (HM.lookup "google-tasks.user" config) >>= DCT.convert
-      patterns :: Maybe [String]
-      patterns = fmap valToList $ HM.lookup (key ".lists") config
-      sources = [GoogleTasksSource <$> (fmap T.unpack user) <*> (pure oauth) <*>
-                 patterns]
-  in mapMaybe id sources
+  let sources = getChildrenOf config "google-tasks"
+      getSource src =
+        let key s = "google-tasks." `T.append` src `T.append` "." `T.append` s
+            oauth :: Maybe FilePath
+            oauth = (HM.lookup (key "oauth-file") config) >>= DCT.convert
+            clientId = (HM.lookup (key "client-id") config) >>= DCT.convert
+            clientSecret = (HM.lookup (key "client-secret") config) >>= DCT.convert
+            user = (HM.lookup (key "user") config) >>= DCT.convert
+            patterns :: Maybe [String]
+            patterns = fmap valToList $ HM.lookup (key "lists") config
+            client = OA.OAuth2Client <$> clientId <*> clientSecret
+            sources = [GoogleTasksSource <$> (pure $ T.unpack src) <*> (fmap T.unpack user) <*>
+                       (pure oauth) <*> client <*> patterns]
+            realSources = catMaybes sources
+            parseDesc = ["Alias: " ++ (T.unpack src), "OAuth: " ++ show oauth,
+                         "Client ID:" ++ show clientId,
+                         "Client Secret: " ++ show clientSecret, "User: " ++ show user,
+                         "Patterns: " ++ show patterns]
+        in trace ("Got values: " ++ (intercalate "," $ map show realSources) ++
+                  " from values: " ++ (intercalate "," parseDesc)) realSources
+  in concatMap getSource sources
 
 loadFileGlob :: Maybe [String] -> IO (Maybe [FilePath])
 loadFileGlob pats =
@@ -253,7 +279,6 @@ loadFileGlob pats =
     (Just xs) -> do files <- mapM glob xs
                     return (Just $ concat files)
     Nothing -> return $ Just []
-
 
 main :: IO ()
 main = do
