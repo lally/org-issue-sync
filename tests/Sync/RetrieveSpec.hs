@@ -35,7 +35,7 @@ instance LoadableSource SetSource where
     let validIssueAndAuth  = auth == (sAuth src) && iss `elem` (sIssues src)
     return $ assert validIssueAndAuth $ Just $ getDetails iss
 
-sI n sum = Issue "SetSource" n "testuser" Open [] sum "test" []
+sI n sum = Issue "SetSource" n "testuser" Open [] sum "test" "" []
 
 simpleNewItems = SetSource Nothing [sI 1 "foo", sI 2 "bar", sI 3 "baz"]
 simpleIssueFile = IssueFile "" (OrgDocView [] (OrgDoc [] []))

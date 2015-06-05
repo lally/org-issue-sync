@@ -37,8 +37,11 @@ convertIssue origin iss =
         | otherwise = '_'
       cleanTag tag = map cleanChar tag
       cleanTags = map cleanTag tags
-  in (Issue origin (GD.issueNumber iss) userName status cleanTags
-      (strip $ GD.issueTitle iss) "github" [])
+      nr = GD.issueNumber iss
+      url = "https://www.github.com/" ++ origin ++ "/issues/" ++
+            (show nr)
+  in (Issue origin nr userName status cleanTags
+      (strip $ GD.issueTitle iss) "github" url [])
 
 wrapEvent :: GD.Event -> IssueEventDetails -> IssueEvent
 wrapEvent event details =

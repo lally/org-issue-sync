@@ -119,8 +119,9 @@ issueOf (FetchedIssue fi) = fi
 issueOf (LoadedIssue _ _ is) = is
 issueOf (MergedIssue fi _ _ _) = fi
 
-showIssue (Issue _ n _ _ _ _ _ es) =
-  (show n) ++ "/" ++ (show $ length es)
+showIssue :: Issue -> String
+showIssue iss =
+  (show $ number iss) ++ "/" ++ (show $ length $ events iss)
 
 instance Show InputIssue where
   show (FetchedIssue f) = "F<" ++ (showIssue f) ++ ">"

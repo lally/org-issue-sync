@@ -30,14 +30,15 @@ instance FromJSON Issue where
                          v .: "tags" <*>
                          v .: "summary" <*>
                          v .: "type" <*>
+                         v .: "url" <*>
                          v .: "events"
   parseJSON _ = mzero
 
 instance ToJSON Issue where
-    toJSON (Issue o nu us st tgs smm ty evts) = object [
+    toJSON (Issue o nu us st tgs smm ty url evts) = object [
       "origin" .= o, "number" .= nu, "user" .= us,
       "status" .= st, "tags" .= tgs, "summary" .= smm,
-      "type" .= ty, "events" .= evts]
+      "type" .= ty, "url" .= url, "events" .= evts]
 
 instance FromJSON IssueEvent where
   parseJSON (Object v) = IssueEvent <$>

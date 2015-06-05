@@ -37,6 +37,7 @@ data Task = Task
             , tStatus :: IssueStatus
             , tCompleted :: Maybe RFCTime
             , tDue :: Maybe RFCTime
+            , tUrl :: String
             } deriving (Eq, Show)
 
 data Tasks = Tasks { tsTasks :: [Task] } deriving (Eq, Show)
@@ -81,7 +82,8 @@ instance FromJSON Task where
        v .:? "notes" <*>
        v .: "status" <*>
        v .:? "completed" <*>
-       v .:? "due"
+       v .:? "due" <*>
+       v .: "selfLink"
   parseJSON _ = mzero
 
 instance FromJSON TaskList where
@@ -161,7 +163,7 @@ convertTask u t =
                    <*> (pure issue_user)
                    <*> note
       events = catMaybes [notesEvent, completionEvent]
-  in Issue u (abs $ hash $ tId t) u (tStatus t) [] (tTitle t) "google-tasks" events
+  in Issue u (abs $ hash $ tId t) u (tStatus t) [] (tTitle t) "google-tasks" (tUrl t) events
 
 getList :: Maybe FilePath -> OAuth2Client -> String -> String -> IO ([Issue])
 getList tokenpath client user listid = do

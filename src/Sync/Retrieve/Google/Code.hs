@@ -60,8 +60,11 @@ fetch project tags = do
        makeIssue :: CSVRow -> Issue
        makeIssue (id, prio, mstone, relblock, area, status, owner,
                   summary, labels) =
-         Issue project id owner (xlate $ map toLower status) (
-           map cleanTag $ map trim $ splitOn "," labels) summary "googlecode" []
+         let url = "https://code.google.com/p/" ++ project ++
+                   "/issues/detail?id=" ++ (show id)
+         in (Issue project id owner (xlate $ map toLower status) (
+                map cleanTag $ map trim $ splitOn "," labels)
+             summary "googlecode" url [])
    issues <- case res of
          Left err -> do putStrLn $ "Failed parse from '" ++ uri ++ "': " ++ err
                         return []
