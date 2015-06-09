@@ -51,6 +51,12 @@ data TaskList = TaskList
 
 data TaskListList = TaskListList [TaskList] deriving (Eq, Show)
 
+data TaggedPattern = TaggedPattern String [String] deriving (Eq, Show)
+data TaggedList = TaggedList TaskList [String] deriving (Eq, Show)
+
+tlList (TaggedList t _) = t
+tlTags (TaggedList _ ts) = ts
+
 fromRfc3399 :: T.Text -> RFCTime
 fromRfc3399 str =
   -- Formats pulled from Data.Time.RFC3399, which didn't compile for me.
@@ -118,16 +124,18 @@ setupToken tokenpath client = do
 authorize token request = request
        { requestHeaders = [(hAuthorization, B8.pack $ "Bearer " <> token)] }
 
-compilePattern :: String -> (TaskList -> Bool)
-compilePattern ('+':rest) = \task -> tlId task == rest
-compilePattern pat =
-  \task -> (tlTitle task) =~ pat
-
 -- | Returns lists for the given user and list-regexs.
-getLists :: Maybe FilePath -> OAuth2Client -> [String] -> IO ([String])
-getLists tokenpath client listregs = do
-  let matchers :: [(TaskList -> Bool)]
-      matchers = map compilePattern listregs
+getLists :: Maybe FilePath -> OAuth2Client -> [(TaskList -> Maybe [String])] -> IO ([TaggedList])
+getLists tokenpath client matchers = do
+  let applyMatchers :: TaskList -> Maybe TaggedList
+      applyMatchers list =
+        let applyMatcher l m = do  -- Maybe monad
+              tags <- m l
+              return $ TaggedList l tags
+            applications = mapMaybe (applyMatcher list) matchers
+        in if length applications > 0
+           then Just $ TaggedList list $ concatMap tlTags applications
+           else Nothing
   token <- setupToken tokenpath client
   request <- parseUrl "https://www.googleapis.com/tasks/v1/users/@me/lists"
   response <- withManager $ httpLbs $ authorize token request
@@ -139,14 +147,10 @@ getLists tokenpath client listregs = do
       decoded = decode body
   case decoded of
     Just (TaskListList lists) -> do
-      let applyMatcher :: TaskList -> (TaskList -> Bool) -> Bool
-          applyMatcher list m = m list
-          checkList :: TaskList -> Bool
-          checkList list = any (applyMatcher list) matchers
-          matches = filter checkList lists
-          matchTitles = map tlTitle matches
-          listIds = map tlId matches
-      return $ trace ("Matching list titles " ++ L.intercalate "," matchTitles) listIds
+      let matches :: [TaggedList]
+          matches = mapMaybe applyMatchers lists
+          matchTitles = map (tlTitle . tlList) matches
+      return $ trace ("Matching list titles " ++ L.intercalate "," matchTitles) matches
     Nothing -> do
       putStrLn $ "Tasks.getLists: Failed to parse " ++ show body
       return []

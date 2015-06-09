@@ -48,14 +48,25 @@ instance LoadableSource GitHubSource where
   fetchDetails oauth ghs iss =
     liftM Just $ GH.fetchDetails oauth (ghUser ghs) (ghProject ghs) iss
 
+data GoogleTasksPattern = GoogleTasksPattern String [String] (GT.TaskList -> Maybe [String])
+
+instance Show GoogleTasksPattern where
+  show (GoogleTasksPattern n tags _) = if length tags > 0
+                                       then n ++ ": " ++ intercalate ", " tags
+                                       else n
+
+instance Eq GoogleTasksPattern where
+  (==) (GoogleTasksPattern m mtags _) (GoogleTasksPattern n ntags _) =
+    m == n && mtags == ntags
 
 data GoogleTasksSource = GoogleTasksSource
                          { gtAlias :: String
                          , gtUser :: String
                          , gtOAuthFile :: Maybe FilePath
                          , gtClient :: OA.OAuth2Client
-                         , gtListPatterns :: [String]
-                         } deriving (Show)
+                         , gtListPatterns :: [GoogleTasksPattern]
+                           -- ^Awkward, but avoids constantly recompiling the regex.
+                         } deriving Show
 
 authClientEq a b = (OA.clientId a) == (OA.clientId b) &&
                    (OA.clientSecret a) == (OA.clientSecret b)
@@ -68,6 +79,9 @@ instance Eq GoogleTasksSource where
     authClientEq (gtClient a) (gtClient b) &&
     (gtListPatterns a) == (gtListPatterns b)
 
+--instance Show GoogleTasksSource where
+--  show s = "GoogleTasksSource { alias=" ++ (gtAlias s) ++ ", user = " ++ (gtUser s) ++ "}"
+
 instance LoadableSource GoogleTasksSource where
   isMember ts iss =
     iType iss == "google-tasks" && (gtUser ts == user iss)
@@ -78,8 +92,13 @@ instance LoadableSource GoogleTasksSource where
     -- here.
     let auth = gtOAuthFile gts
         client = gtClient gts
-    lists <- GT.getLists auth client (gtListPatterns gts)
-    all <- mapM (\list -> GT.getList auth client (gtUser gts) list) lists
+        setTags tgs iss = iss { tags = (tags iss) ++ tgs }
+        gpFun (GoogleTasksPattern _ _ f) = f
+    lists <- GT.getLists auth client (map gpFun $ gtListPatterns gts)
+    -- TO FIX: apply tags to each one.
+    all <- mapM (\list -> do
+                  issues <- GT.getList auth client (gtUser gts) (GT.tlTitle . GT.tlList $list)
+                  return $ map (setTags (GT.tlTags list)) issues) lists
     return $ concat all
   fetchDetails auth gts iss =
     return $ Just iss

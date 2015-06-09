@@ -17,12 +17,14 @@ import System.Environment (getArgs)
 import System.Exit
 import System.IO
 import System.FilePath.Glob
+import Text.Regex.Posix
 
 import qualified Data.Configurator as DC
 import qualified Data.Configurator.Types as DCT
 import qualified Data.Text as T
 import qualified Data.HashMap.Strict as HM
 import qualified Network.Google.OAuth2 as OA
+import qualified Sync.Retrieve.Google.Tasks as GT
 
 -- Config Format:
 -- scan_files = ["~/org/*.org"]
@@ -105,8 +107,8 @@ describeConfiguration runcfg = do
         if length terms > 0
         then " with search terms " ++ (intercalate ", " terms)
         else "")
-      descGoogleTasks (GoogleTasksSource u _ _ _  lp) = u ++ "/" ++ (
-        intercalate "," lp)
+      descGoogleTasks (GoogleTasksSource u _ _ _ lp) =
+        u ++ "/[" ++ (intercalate ";" $ map show lp) ++ "]"
   putStrLn $ "Will search for issues in these files:\n\t" ++ (
     intercalate "\n\t" scan_files)
   if length github > 0
@@ -167,6 +169,9 @@ valToList :: DCT.Value -> [String]
 valToList (DCT.List els) = map T.unpack $ mapMaybe DCT.convert els
 valToList _ = []
 
+-- |Get a list of list of Strings, unless it's really just a list of
+-- strings, in which case we just have one inner list.  Look at the
+-- first value type in the keyed list to determine which.
 getMultiList :: HM.HashMap DCT.Name DCT.Value -> T.Text -> [[String]]
 getMultiList config key =
   let res = HM.lookup key config in
@@ -184,6 +189,26 @@ getMultiList config key =
     Just (DCT.List []) -> []
     otherwise -> trace ("looking up key " ++ (show key) ++ " results in "
                         ++ show res) []
+
+-- | Force result into [[String]] result, even if the inner list only
+-- has one element.
+multiListForced :: HM.HashMap DCT.Name DCT.Value -> T.Text -> [[String]]
+multiListForced config key =
+  let res = HM.lookup key config
+      convList :: [DCT.Value] -> [[String]]
+      convList [] = []
+      convList (x:xs) =
+        case x of
+          DCT.List ys ->
+            filter (\l -> length l > 0) $ map valToList ys
+          DCT.String s ->
+            [[show s]]
+          otherwise -> []
+  in case res of
+    Nothing -> []
+    Just (DCT.List xs) ->
+      convList xs
+    otherwise -> trace ("Key " ++ (show key) ++ " was not a list, but: " ++ show res) []
 
 loadGCSources :: HM.HashMap DCT.Name DCT.Value -> [GoogleCodeSource]
 loadGCSources config =
@@ -246,9 +271,18 @@ loadGHSources config =
      lists = [[".*", "TAG1", "TAG2"], ["FooBar", "FOO", "BAR"]]
    }
  }
- TODO: make it keyed by user so that I can have many.
-  google-tasks { gmail@user.account { oauth-file = .. }}
 -}
+compilePattern :: [String] -> GoogleTasksPattern
+compilePattern (('+':rest):tags) =
+  GoogleTasksPattern rest tags (\task ->
+                                 if GT.tlId task == rest
+                                 then Just tags
+                                 else Nothing)
+compilePattern (pat:tags) =
+  GoogleTasksPattern pat tags (\task -> if (GT.tlTitle task) =~ pat
+                                        then Just tags
+                                        else Nothing)
+
 loadGTSources :: HM.HashMap DCT.Name DCT.Value -> [GoogleTasksSource]
 loadGTSources config =
   let sources = getChildrenOf config "google-tasks"
@@ -259,16 +293,14 @@ loadGTSources config =
             clientId = (HM.lookup (key "client-id") config) >>= DCT.convert
             clientSecret = (HM.lookup (key "client-secret") config) >>= DCT.convert
             user = (HM.lookup (key "user") config) >>= DCT.convert
-            patterns :: Maybe [String]
-            patterns = fmap valToList $ HM.lookup (key "lists") config
+            patterns = fmap compilePattern $ multiListForced config (key "lists")
             client = OA.OAuth2Client <$> clientId <*> clientSecret
             sources = [GoogleTasksSource <$> (pure $ T.unpack src) <*> (fmap T.unpack user) <*>
-                       (pure oauth) <*> client <*> patterns]
+                       (pure oauth) <*> client <*> (pure patterns)]
             realSources = catMaybes sources
             parseDesc = ["Alias: " ++ (T.unpack src), "OAuth: " ++ show oauth,
                          "Client ID:" ++ show clientId,
-                         "Client Secret: " ++ show clientSecret, "User: " ++ show user,
-                         "Patterns: " ++ show patterns]
+                         "Client Secret: " ++ show clientSecret, "User: " ++ show user]
         in trace ("Got values: " ++ (intercalate "," $ map show realSources) ++
                   " from values: " ++ (intercalate "," parseDesc)) realSources
   in concatMap getSource sources
