@@ -200,9 +200,9 @@ multiListForced config key =
       convList (x:xs) =
         case x of
           DCT.List ys ->
-            filter (\l -> length l > 0) $ map valToList ys
+            (map T.unpack $ mapMaybe DCT.convert ys):(convList xs)
           DCT.String s ->
-            [[show s]]
+            [T.unpack s]:(convList xs)
           otherwise -> []
   in case res of
     Nothing -> []
@@ -274,14 +274,20 @@ loadGHSources config =
 -}
 compilePattern :: [String] -> GoogleTasksPattern
 compilePattern (('+':rest):tags) =
-  GoogleTasksPattern rest tags (\task ->
-                                 if GT.tlId task == rest
-                                 then Just tags
-                                 else Nothing)
+  let matchId task =
+        let matches = (GT.tlId task) == rest
+            matchDesc = "[" ++ rest ++ ": matching " ++ GT.tlId task ++ ": " ++
+                        show matches ++ "]"
+        in if matches then Just tags else Nothing
+  in GoogleTasksPattern rest tags matchId
+
 compilePattern (pat:tags) =
-  GoogleTasksPattern pat tags (\task -> if (GT.tlTitle task) =~ pat
-                                        then Just tags
-                                        else Nothing)
+  let matchTitle task =
+        let matches = GT.tlTitle task =~ pat :: Bool
+            matchDesc = "[" ++ pat ++ ": matching " ++ GT.tlTitle task ++ ": " ++
+                        show matches ++ "]"
+        in if matches then Just tags else Nothing
+  in GoogleTasksPattern pat tags matchTitle
 
 loadGTSources :: HM.HashMap DCT.Name DCT.Value -> [GoogleTasksSource]
 loadGTSources config =
@@ -295,14 +301,10 @@ loadGTSources config =
             user = (HM.lookup (key "user") config) >>= DCT.convert
             patterns = fmap compilePattern $ multiListForced config (key "lists")
             client = OA.OAuth2Client <$> clientId <*> clientSecret
-            sources = [GoogleTasksSource <$> (pure $ T.unpack src) <*> (fmap T.unpack user) <*>
-                       (pure oauth) <*> client <*> (pure patterns)]
-            realSources = catMaybes sources
-            parseDesc = ["Alias: " ++ (T.unpack src), "OAuth: " ++ show oauth,
-                         "Client ID:" ++ show clientId,
-                         "Client Secret: " ++ show clientSecret, "User: " ++ show user]
-        in trace ("Got values: " ++ (intercalate "," $ map show realSources) ++
-                  " from values: " ++ (intercalate "," parseDesc)) realSources
+            sources = [GoogleTasksSource <$> (pure $ T.unpack src) <*>
+                       (fmap T.unpack user) <*> (pure oauth) <*> client <*>
+                       (pure patterns)]
+        in catMaybes sources
   in concatMap getSource sources
 
 loadFileGlob :: Maybe [String] -> IO (Maybe [FilePath])

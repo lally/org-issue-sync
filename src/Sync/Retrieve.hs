@@ -65,7 +65,6 @@ data GoogleTasksSource = GoogleTasksSource
                          , gtOAuthFile :: Maybe FilePath
                          , gtClient :: OA.OAuth2Client
                          , gtListPatterns :: [GoogleTasksPattern]
-                           -- ^Awkward, but avoids constantly recompiling the regex.
                          } deriving Show
 
 authClientEq a b = (OA.clientId a) == (OA.clientId b) &&
@@ -97,7 +96,7 @@ instance LoadableSource GoogleTasksSource where
     lists <- GT.getLists auth client (map gpFun $ gtListPatterns gts)
     -- TO FIX: apply tags to each one.
     all <- mapM (\list -> do
-                  issues <- GT.getList auth client (gtUser gts) (GT.tlTitle . GT.tlList $list)
+                  issues <- GT.getList auth client (gtUser gts) (GT.tlId . GT.tlList $list)
                   return $ map (setTags (GT.tlTags list)) issues) lists
     return $ concat all
   fetchDetails auth gts iss =

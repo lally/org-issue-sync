@@ -158,7 +158,6 @@ fetchIssues runcfg verbose existing = do
   postGcIssues <- foldM (loadSource Nothing) postGhIssues gcode
 
   cL $ "Loading from " ++ (show $ length gtasks) ++ " Google Tasks queries..."
-  pcL (length gtasks > 0) $ "Loading from Google Tasks..."
   postGtIssues <- foldM (loadSource Nothing) postGcIssues gtasks
   let foundIssues = nub $ sort $ postGtIssues
 
@@ -193,7 +192,7 @@ runConfiguration runcfg options = do
         Just win -> TS.width win
   fileIssues <- loadIssuesFromConfiguration runcfg
 
-  cL "\n\n** Done loading **\n"
+  cL "\n** Done loading **\n"
 
   repoIssues <- if fetch
                 then do
@@ -245,8 +244,9 @@ runConfiguration runcfg options = do
   cL ("Found " ++ (show $ length mergeIssues) ++ " Changed issues.")
   cL ("Writing to files: " ++ (
          intercalate "," (map (ifPath . fst) mergeIssuesByfile)))
-  cL ("Not writing to files: " ++ (
-         intercalate "," $ map (ifPath . fst) ignoreIssuesByFile))
+  -- This isn't right.  We may have non-ignored issues in those files.
+  --  cL ("Not writing to files: " ++ (
+  --         intercalate "," $ map (ifPath . fst) ignoreIssuesByFile))
 
   -- For each changed file, load it up, update the issue->nodes, and
   -- then re-write the files.

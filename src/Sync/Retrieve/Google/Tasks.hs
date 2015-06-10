@@ -125,7 +125,10 @@ authorize token request = request
        { requestHeaders = [(hAuthorization, B8.pack $ "Bearer " <> token)] }
 
 -- | Returns lists for the given user and list-regexs.
-getLists :: Maybe FilePath -> OAuth2Client -> [(TaskList -> Maybe [String])] -> IO ([TaggedList])
+getLists :: Maybe FilePath ->
+            OAuth2Client ->
+            [(TaskList -> Maybe [String])] ->
+            IO ([TaggedList])
 getLists tokenpath client matchers = do
   let applyMatchers :: TaskList -> Maybe TaggedList
       applyMatchers list =
@@ -150,7 +153,8 @@ getLists tokenpath client matchers = do
       let matches :: [TaggedList]
           matches = mapMaybe applyMatchers lists
           matchTitles = map (tlTitle . tlList) matches
-      return $ trace ("Matching list titles " ++ L.intercalate "," matchTitles) matches
+          cnt = show $ length matchTitles
+      return  matches
     Nothing -> do
       putStrLn $ "Tasks.getLists: Failed to parse " ++ show body
       return []
@@ -172,12 +176,11 @@ convertTask u t =
 getList :: Maybe FilePath -> OAuth2Client -> String -> String -> IO ([Issue])
 getList tokenpath client user listid = do
   token <- setupToken tokenpath client
-  putStrLn $ "Requesting list id " ++ listid
   request <-
-    parseUrl ("https://www.googleapis.com/tasks/v1/lists/" ++ listid ++ "/tasks")
+    parseUrl ("https://www.googleapis.com/tasks/v1/lists/" ++ listid ++
+              "/tasks")
   response <- withManager $ httpLbs $ authorize token request
   let body = responseBody response
   let list = decode body :: Maybe Tasks
-  putStrLn $ "getList(" ++ listid ++ "): parsed to " ++ show list
   return $ maybe [] (\l -> map (convertTask user)  $ tsTasks l) list
 

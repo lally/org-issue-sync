@@ -83,8 +83,12 @@ convertIssueEvent event
 
   | (GD.eventType event) == GD.Demilestoned = [
     wrapEvent event $ IssueComment "Removed a milestone"]
+  | (GD.eventType event) == GD.Subscribed = [
+    wrapEvent event $ IssueComment "Subscribed"]
+  | (GD.eventType event) == GD.Mentioned = [
+    wrapEvent event $ IssueComment "Mentioned"]
 -- ignored, make into comment
-  | otherwise = [wrapEvent event $ (IssueComment (show event))]
+  | otherwise = [wrapEvent event $ (IssueComment (show $ GD.eventType event))]
 
 convertIssueComment :: GD.IssueComment -> [IssueEvent]
 convertIssueComment comment =
