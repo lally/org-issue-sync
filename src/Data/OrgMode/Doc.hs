@@ -1,11 +1,10 @@
 module Data.OrgMode.Doc where
 import Data.List (intercalate)
+import Data.OrgMode.Text
 
 --
 -- * Data Decls
 --
-
-import Data.OrgMode.Text
 
 data Prefix = Prefix String deriving (Eq, Show)
 

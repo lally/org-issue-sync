@@ -33,7 +33,8 @@ printChild _ = Nothing
 printChildren = (intercalate ",") . catMaybes . (map printChild) . nChildren
 
 -- | Closes up the path for the zipper, up through to (e.g., >=) the
--- specified depth.  Returns the new path, and roots that have been fully closed
+-- specified depth.  Returns the new path, and roots that have been
+-- fully closed in the process.
 appendChildrenUpPathThroughDepth :: Int -> [Node] -> ([Node], [Node])
 appendChildrenUpPathThroughDepth _ [] = ([], [])
 appendChildrenUpPathThroughDepth depth [n]
@@ -42,20 +43,6 @@ appendChildrenUpPathThroughDepth depth [n]
     in ([], res)
   | otherwise = ([n], [])
 
--- The problem is that I'm flipping the parent twice.  I want it to be
--- once, but I'm not sure about depth vs nDepth of that parent!  Well, I
--- have the depth of the parent, so I know the depth I've already
--- reversed.  How do I use this?
---
--- First, which parents do I reverse?  The ones that are *closed*.
--- Any one that's staying on the path after this function is closed.
--- If it's staying, it should not be reversed.  We only reverse ones
--- that we take out of the path, except for up top, where we keep it.
---
--- And that's the problem.  We don't trim the root out after reversal,
--- and make it susceptable to some weirdness here.  We don't recurse
--- again on it, so what's our base case?  BASE CASE:
--- Node with children: reverse 
 appendChildrenUpPathThroughDepth depth (n:ns)
   | nDepth n >= depth =
     let parent = head ns
@@ -63,7 +50,6 @@ appendChildrenUpPathThroughDepth depth (n:ns)
         fixedUpChild = n { nChildren = reverse $ nChildren n }
         updatedParent = parent { nChildren = (ChildNode fixedUpChild):parentChildren }
         updatedPath = updatedParent : (tail ns)
-        traceMsg = "+<" ++ (show depth) ++ ">[" ++ (nTopic n) ++ ": " ++ (printChildren n) ++ "]"
     in appendChildrenUpPathThroughDepth depth updatedPath
   | otherwise = (n:ns, [])
 

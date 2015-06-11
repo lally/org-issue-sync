@@ -38,13 +38,20 @@ makeIssueOrgHeading fstLine dpth issue =
             else ""
   in TextLine depth (prefix ++ " " ++ todo ++ " " ++ summ ++ tgs) fstLine
 
+kIssueOrigin = "ISSUEORIGIN"
+kIssueNum = "ISSUENUM"
+kIssueUser = "ISSUEUSER"
+kIssueType = "ISSUETYPE"
+kUrl = "URL"
+
 makeIssueOrgDrawer :: LineNumber -> Int -> Issue -> [TextLine]
 makeIssueOrgDrawer fstLine depth issue =
   let props = [
-        ("ISSUENUM", show $ number issue),
-        ("ISSUEORIGIN", origin issue),
-        ("ISSUEUSER", user issue),
-        ("ISSUETYPE", iType issue)]
+        (kIssueNum, show $ number issue),
+        (kIssueOrigin, origin issue),
+        (kIssueUser, user issue),
+        (kIssueType, iType issue),
+        (kUrl, iUrl issue)]
   in makeDrawerLines fstLine depth "PROPERTIES" props
 
 makeIssueOrgNode :: LineNumber -> Int -> Issue -> String
@@ -52,7 +59,7 @@ makeIssueOrgNode fstLine depth issue =
   let indent = take depth $ repeat ' '
       heading = makeIssueOrgHeading fstLine depth issue
       drawer = makeIssueOrgDrawer (mappend fstLine (Line 1)) depth issue
-      url_text = indent ++ "- [[" ++ (makeIssueUrl issue) ++ "][Issue Link]]"
+      url_text = indent ++ "- [[" ++ (iUrl issue) ++ "][Issue Link]]"
       url = TextLine depth url_text (mconcat [fstLine, Line 1, Line (length drawer)])
       body = drawer ++ [url] ++ (
         getTextLines $ makeIssueSubNode (depth+1) (
@@ -81,13 +88,15 @@ statusIssue s =
 
 -- * Reading and Mutating Issue Nodes
 
+-- | Returns an Issue (good enough for summary and identity checks, not
+-- a full reconstruction) from a Node, if present in properties.
 getOrgIssue :: Node -> Maybe Issue
 getOrgIssue n =
   let draw = propDrawer n
-      hasOrigin = hasKey "ISSUEORIGIN" draw
-      hasNum = hasKey "ISSUENUM" draw
-      hasUser = hasKey "ISSUEUSER" draw
-      hasType = hasKey "ISSUETYPE" draw
+      hasOrigin = hasKey kIssueOrigin draw
+      hasNum = hasKey kIssueNum draw
+      hasUser = hasKey kIssueUser draw
+      hasType = hasKey kIssueType draw
       drawerOf (ChildDrawer d) = Just d
       drawerOf _ = Nothing
       drawersOf nd = mapMaybe drawerOf $ nChildren nd
@@ -102,11 +111,14 @@ getOrgIssue n =
       mapStatus (Just (Prefix s)) = case (statusIssue s) of
         Just st -> st
         Nothing -> Open
+      url = if hasKey kUrl draw
+            then valOf kUrl draw
+            else ""
   in if (hasPropDrawer n && hasOrigin && hasNum && hasUser && hasType)
-     then Just $ Issue (valOf "ISSUEORIGIN" draw) (
-       read $ valOf "ISSUENUM" draw) (
-       valOf "ISSUEUSER" draw) (mapStatus $ nPrefix n) (nTags n) (nTopic n) (
-       valOf "ISSUETYPE" draw) []
+     then Just $ Issue (valOf kIssueOrigin draw) (
+       read $ valOf kIssueNum draw) (
+       valOf kIssueUser draw) (mapStatus $ nPrefix n) (nTags n) (nTopic n) (
+       valOf kIssueType draw) url []
      else Nothing
 
 makeIssueLine :: Int -> LineNumber -> IssueEvent -> [NodeChild]

@@ -1,7 +1,7 @@
-module Sync.Retrieve.GoogleCode.GoogleCode where
+module Sync.Retrieve.Google.Code where
 
 import qualified Data.Csv as CSV
-import Sync.Retrieve.GoogleCode.Parse
+import Sync.Retrieve.Google.Code.Parse
 import Data.Char (toLower, isSpace, ord, isAlphaNum)
 import Data.Vector (Vector, toList)
 import Data.ByteString.Lazy.Char8 (pack)
@@ -27,7 +27,7 @@ parseFile file =
         CSV.decDelimiter = fromIntegral (ord ',') }
   in CSV.decodeWith myOptions CSV.HasHeader $ pack file
 
-
+-- TODO(lally): Make fetchDetails return a full Issue.
 fetchDetails :: String -> Int -> IO [IssueEvent]
 fetchDetails repo issueNum = do
   let openURL x = getResponseBody =<< simpleHTTP (getRequest x)
@@ -60,8 +60,11 @@ fetch project tags = do
        makeIssue :: CSVRow -> Issue
        makeIssue (id, prio, mstone, relblock, area, status, owner,
                   summary, labels) =
-         Issue project id owner (xlate $ map toLower status) (
-           map cleanTag $ map trim $ splitOn "," labels) summary "googlecode" []
+         let url = "https://code.google.com/p/" ++ project ++
+                   "/issues/detail?id=" ++ (show id)
+         in (Issue project id owner (xlate $ map toLower status) (
+                map cleanTag $ map trim $ splitOn "," labels)
+             summary "googlecode" url [])
    issues <- case res of
          Left err -> do putStrLn $ "Failed parse from '" ++ uri ++ "': " ++ err
                         return []

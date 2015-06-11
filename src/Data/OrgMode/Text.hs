@@ -2,7 +2,7 @@
 
 module Data.OrgMode.Text (
   LineNumber(..), toNumber, TextLine(..), isNumber, TextLineSource(..), normalizeInputText,
-  linesStartingFrom, hasNumber, makeDrawerLines, wrapLine, prefixLine, tlPrint, tlFormat
+  linesStartingFrom, hasNumber, makeDrawerLines, wrapLine, prefixLine, tlPrint, tlFormat, wrapStringVarLines
   ) where
 
 import Data.List (intercalate)
@@ -114,7 +114,26 @@ normalizeInputText text =
 trimEndOfLine :: String -> String
 trimEndOfLine f = reverse $ dropWhile isSpace $ reverse f
 
+wrapStringVarLines :: [Int] -> String -> String
+wrapStringVarLines _ [] = []
+wrapStringVarLines lens str
+  | length str < (head lens) = str
+  | otherwise =
+    let first_word = takeWhile (not . isSpace) str
+        len = head lens
+        is_first_too_long = length first_word >= len
+        wrapped_back =
+          if is_first_too_long
+          then first_word
+          else reverse $ dropWhile (not . isSpace) $ reverse $ take len str
+        remain = drop (length wrapped_back) str
+    in if length wrapped_back > 0 || length remain > 0
+       then wrapped_back ++ "\n" ++ wrapStringVarLines (drop 1 lens) remain
+       else ""
+
 wrapString :: Int -> String -> String
+wrapString len str = wrapStringVarLines (repeat len) str
+{-
 wrapString _ [] = []
 wrapString len str
   | length str < len = str
@@ -129,7 +148,7 @@ wrapString len str
     in if length wrapped_back > 0 || length remain > 0
        then wrapped_back ++ "\n" ++ wrapString len remain
        else ""
-
+-}
 wrapLine :: Int -> TextLine -> [TextLine]
 wrapLine width (TextLine indent string linenum) =
   let desired_len = width - indent

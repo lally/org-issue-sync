@@ -1,4 +1,4 @@
-module Sync.Retrieve.GoogleCode.Parse (parseIssueText) where
+module Sync.Retrieve.Google.Code.Parse (parseIssueText) where
 
 import Data.OrgMode.Text
 import Text.HTML.TagSoup
