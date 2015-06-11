@@ -17,4 +17,4 @@ Planned
 -------
 * Separate the org-mode I/O core from the issues system
 * Re-arch the config file system to support reload
-* Let this importer work as a recurring automatic service, either autolaunched or 
+* Let this importer work as a recurring automatic service, either autolaunched or in some loop.
