@@ -324,7 +324,6 @@ loadFileGlob pats =
                     let keyMap = HM.fromList environ
                         home = HM.lookupDefault "" "HOME" keyMap
                     files <- mapM glob $ map (resolveTilde home) xs
-                    putStrLn $ "Globbed (" ++ (intercalate ", " xs) ++ ") to:" ++  (intercalate ", " $ concat files)
                     return (Just $ concat files)
     Nothing -> return $ Just []
 
