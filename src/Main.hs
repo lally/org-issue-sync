@@ -13,7 +13,7 @@ import Data.Issue
 import Data.IssueCache
 import Data.List (intercalate)
 import System.Console.GetOpt
-import System.Environment (getArgs)
+import System.Environment (getArgs, getEnvironment)
 import System.Exit
 import System.IO
 import System.FilePath.Glob
@@ -128,13 +128,18 @@ describeConfiguration runcfg = do
 
 loadConfig :: DCT.Config -> IO (Maybe RunConfiguration)
 loadConfig config = do
+  environ <- getEnvironment
+  let keyMap = HM.fromList environ
+      home = HM.lookupDefault "" "HOME" keyMap
   configmap <- DC.getMap config
   file_patterns <- DC.lookup config "scan_files"
   file_list <- loadFileGlob file_patterns
   stub_patterns <- DC.lookup config "stub_files"
   stub_list <- loadFileGlob stub_patterns
-  output_file <- DC.lookup config "output_file"
-  cache <- DC.lookup config "cache_dir"
+  raw_output_file <- DC.lookup config "output_file"
+  let output_file = fmap (resolveTilde home) raw_output_file
+  raw_cache <- DC.lookup config "cache_dir"
+  let cache = fmap (resolveTilde home) raw_cache
   github_oauth <- DC.lookup config "github.auth_token" :: IO (Maybe T.Text)
   cache_dir <- if isJust cache
                then do let (Just store) = cache
@@ -146,7 +151,7 @@ loadConfig config = do
                else return Nothing
   let gh_list = loadGHSources configmap
       gc_list = loadGCSources configmap
-      gt_list = loadGTSources configmap
+      gt_list = loadGTSources home configmap
       gh_auth = fmap T.unpack github_oauth
   return $ RunConfiguration <$> file_list <*> stub_list <*> output_file <*>
     (pure gh_auth) <*> (pure gh_list) <*> (pure gc_list) <*>
@@ -289,13 +294,14 @@ compilePattern (pat:tags) =
         in if matches then Just tags else Nothing
   in GoogleTasksPattern pat tags matchTitle
 
-loadGTSources :: HM.HashMap DCT.Name DCT.Value -> [GoogleTasksSource]
-loadGTSources config =
+loadGTSources :: String -> HM.HashMap DCT.Name DCT.Value -> [GoogleTasksSource]
+loadGTSources home config =
   let sources = getChildrenOf config "google-tasks"
       getSource src =
         let key s = "google-tasks." `T.append` src `T.append` "." `T.append` s
+            raw_oauth = (HM.lookup (key "oauth-file") config) >>= DCT.convert
             oauth :: Maybe FilePath
-            oauth = (HM.lookup (key "oauth-file") config) >>= DCT.convert
+            oauth = fmap (resolveTilde home) raw_oauth
             clientId = (HM.lookup (key "client-id") config) >>= DCT.convert
             clientSecret = (HM.lookup (key "client-secret") config) >>= DCT.convert
             user = (HM.lookup (key "user") config) >>= DCT.convert
@@ -307,10 +313,18 @@ loadGTSources config =
         in catMaybes sources
   in concatMap getSource sources
 
+resolveTilde :: String -> String -> String
+resolveTilde home ('~':'/':path) = home ++ "/" ++ path
+resolveTilde home path = path
+
 loadFileGlob :: Maybe [String] -> IO (Maybe [FilePath])
 loadFileGlob pats =
   case pats of
-    (Just xs) -> do files <- mapM glob xs
+    (Just xs) -> do environ <- getEnvironment
+                    let keyMap = HM.fromList environ
+                        home = HM.lookupDefault "" "HOME" keyMap
+                    files <- mapM glob $ map (resolveTilde home) xs
+                    putStrLn $ "Globbed (" ++ (intercalate ", " xs) ++ ") to:" ++  (intercalate ", " $ concat files)
                     return (Just $ concat files)
     Nothing -> return $ Just []
 

@@ -120,9 +120,9 @@ updateIssueFile verbose file issuelist = do
 loadIssuesFromConfiguration :: RunConfiguration -> IO [InputIssue]
 loadIssuesFromConfiguration runcfg = do
   let origScanFiles = rcScanFiles runcfg
-      scanFiles = nub origScanFiles
+      scanFiles = nub $ sort origScanFiles
       origStubFiles = rcStubFiles runcfg
-      stubFiles = nub origStubFiles
+      stubFiles = nub $ sort origStubFiles
   let getIssues save issuefile =
         let rawIssues = map fst $ ovElements $ ifDoc issuefile
         in map (LoadedIssue save issuefile) rawIssues
