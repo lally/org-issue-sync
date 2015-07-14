@@ -15,6 +15,9 @@ import Debug.Trace (trace)
 import Text.Parsec
 import Text.Regex.Posix
 
+mkLine :: Int -> LineNumber
+mkLine n = (Just (Sum n)) :: LineNumber
+
 -- * Issue <-> Org Mapping
 
 -- https://github.com/freedomjs/freedom-pgp-e2e/issues/6
@@ -58,19 +61,19 @@ makeIssueOrgNode :: LineNumber -> Int -> Issue -> String
 makeIssueOrgNode fstLine depth issue =
   let indent = take depth $ repeat ' '
       heading = makeIssueOrgHeading fstLine depth issue
-      drawer = makeIssueOrgDrawer (mappend fstLine (Line 1)) depth issue
+      drawer = makeIssueOrgDrawer (mappend fstLine (mkLine 1)) depth issue
       url_text = indent ++ "- [[" ++ (iUrl issue) ++ "][Issue Link]]"
-      url = TextLine depth url_text (mconcat [fstLine, Line 1, Line (length drawer)])
+      url = TextLine depth url_text (mconcat [fstLine, mkLine 1, mkLine (length drawer)])
       body = drawer ++ [url] ++ (
         getTextLines $ makeIssueSubNode (depth+1) (
-           mconcat [fstLine, Line 2, Line $ length drawer]) issue)
+           mconcat [fstLine, mkLine 2, mkLine $ length drawer]) issue)
       node_text = [tlText $ heading] ++ (map tlText body)
   in unlines $ node_text
 
 -- Dumb v0.1: just splat issues at the end of files.
 appendIssues :: FilePath -> [Issue] -> IO ()
 appendIssues file issues = do
-  let headings = intercalate "\n" $ map (makeIssueOrgNode NoLine 2) issues
+  let headings = intercalate "\n" $ map (makeIssueOrgNode Nothing 2) issues
   appendFile file headings
 
 issueStatus :: IssueStatus -> String
@@ -166,8 +169,8 @@ makeIssueSubNode depth fst_line iss =
       issueStartingFrom _ [] = []
       issueStartingFrom line_nr (e:es) =
         let cur_child = makeIssueLine depth line_nr e
-        in cur_child ++ (issueStartingFrom (mappend line_nr (Line $ length cur_child)) es)
-      children = issueStartingFrom (mappend fst_line (Line 1)) $ events iss
+        in cur_child ++ (issueStartingFrom (mappend line_nr (mkLine $ length cur_child)) es)
+      children = issueStartingFrom (mappend fst_line (mkLine 1)) $ events iss
   in ChildNode $ Node depth Nothing [] children "ISSUE EVENTS" (
     TextLine depth (prefix++" ISSUE EVENTS") fst_line)
 
@@ -216,7 +219,7 @@ updateOrgIssueNodeLine iss node =
   let -- puts the new ISSUE EVENTS child |chld| in place of the old
       -- one, or at the end if we didn't find one.
       summaryNode = ChildText $ TextLine (nDepth node) (
-        intercalate ", " $ map summarizeChild $ nChildren node) NoLine
+        intercalate ", " $ map summarizeChild $ nChildren node) Nothing
       updateChild chld children = -- summaryNode:chld:children
         insertAtIndex chld (finalChildIndex node children) $
         filter (not . isGeneratedChild) children
@@ -226,8 +229,8 @@ updateOrgIssueNodeLine iss node =
     Just old_iss ->
       if old_iss == iss
       then let new_iss = iss { tags = (tags iss) ++ (preservedTags $ nTags node) }
-               heading = makeIssueOrgHeading NoLine (nDepth node) new_iss
-               childNode = makeIssueSubNode (1 + nDepth node) NoLine iss
+               heading = makeIssueOrgHeading Nothing (nDepth node) new_iss
+               childNode = makeIssueSubNode (1 + nDepth node) Nothing iss
                new_node = node { nLine = heading
                                , nPrefix = statusPrefix
                                , nTags = tags new_iss

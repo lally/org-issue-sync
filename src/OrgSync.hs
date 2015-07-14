@@ -91,7 +91,7 @@ printIssues width inpissues =
 
 loadIssueFile :: FilePath -> IO IssueFile
 loadIssueFile path = do
-  let retEmpty _ = return $ OrgDocView [] (OrgDoc [] [])
+  let retEmpty _ = return $ OrgDocView [] (OrgDoc [] [] [])
   doc <- catchIOError (loadOrgIssues path) retEmpty
   return $ IssueFile path doc
 
