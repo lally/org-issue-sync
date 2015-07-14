@@ -38,7 +38,7 @@ instance LoadableSource SetSource where
 sI n sum = Issue "SetSource" n "testuser" Open [] sum "test" "" []
 
 simpleNewItems = SetSource Nothing [sI 1 "foo", sI 2 "bar", sI 3 "baz"]
-simpleIssueFile = IssueFile "" (OrgDocView [] (OrgDoc [] []))
+simpleIssueFile = IssueFile "" (OrgDocView [] (OrgDoc [] [] []))
 
 spec :: Spec
 spec = do

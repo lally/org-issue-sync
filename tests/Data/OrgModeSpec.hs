@@ -4,6 +4,7 @@ import Data.ArbOrgNode
 import Control.Applicative ((<$>))
 import Control.Monad (liftM)
 import Data.OrgMode
+import Data.OrgMode.Text
 import Data.Char (isSpace, isPrint, chr, toUpper)
 import Data.Foldable (foldlM)
 import Data.List (sort, intercalate, nub)
@@ -66,8 +67,8 @@ instance Show FullyNumberedNode where
 
 instance Arbitrary FullyNumberedNode where
   arbitrary = do
-    let lnfunc (Line x) = return (Line (x+1))
-    nd <- arbNode (Line 1) 1 lnfunc
+    let lnfunc (Just x) = return (Just (x+1))
+    nd <- arbNode (Just 1) 1 lnfunc
     return (FullyNumberedNode nd)
 
 data UnnumberedNode = UnnumberedNode Node deriving (Eq)
@@ -76,8 +77,8 @@ instance Show UnnumberedNode where
 
 instance Arbitrary UnnumberedNode where
   arbitrary = do
-    let lnfunc NoLine = return NoLine
-    nd <- arbNode NoLine 1 lnfunc
+    let lnfunc Nothing = return Nothing
+    nd <- arbNode Nothing 1 lnfunc
     return (UnnumberedNode nd)
 
 showDiff width (l, r) =
@@ -106,8 +107,8 @@ instance Show LineDiffNode where
 
 instance Arbitrary LineDiffNode where
   arbitrary = do
-    let lnfunc (Line x) = return (Line (x+1))
-    nd <- arbNode (Line 1) 1 lnfunc
+    let lnfunc (Just x) = return (Just (x+1))
+    nd <- arbNode (Just 1) 1 lnfunc
     return (LineDiffNode nd)
 
 -- | Test TextLineSource OrgDoc.  We should give it nodes that do and
@@ -148,8 +149,8 @@ propLinesOfNodeAreSingular (FullyNumberedNode node) =
 propLinesOfNodeAreSequential :: FullyNumberedNode -> Bool
 propLinesOfNodeAreSequential (FullyNumberedNode node) =
   let linesSequential [] = True
-      linesSequential [Line _] = True
-      linesSequential lst@((Line x):(Line y):xs) =
+      linesSequential [Just _] = True
+      linesSequential lst@((Just x):(Just y):xs) =
         (y == x+1) && linesSequential (tail lst)
   in linesSequential$ map tlLineNum $ getTextLines node
 

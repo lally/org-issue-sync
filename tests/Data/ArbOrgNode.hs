@@ -5,6 +5,8 @@ import Control.Applicative ((<$>))
 import Control.Exception (assert)
 import Control.Monad (liftM)
 import Data.OrgMode
+import Data.OrgMode.Doc
+import Data.OrgMode.Text
 import Data.Char (isSpace, isPrint, chr, toUpper)
 import Data.Foldable (foldlM)
 import Data.List (sort)
@@ -49,11 +51,11 @@ arbitraryTextMin depth = arbitraryTextCore 1 depth
 arbitraryText depth = arbitraryTextCore 0 depth
 
 nextLine :: LineNumber -> LineNumber
-nextLine = flip mappend (Line 1)
+nextLine = flip lineAdd (Just 1)
 
 packLines :: Int -> LineNumber -> [String] -> [TextLine]
 packLines depth linenr lines =
-  let nrs = map (\n -> mappend linenr $ Line n) [0..]
+  let nrs = map (\n -> lineAdd linenr $ Just n) [0..]
       ln_nrs = zip lines nrs
       mkline (s,ln) = TextLine depth s ln
   in map mkline ln_nrs
@@ -123,7 +125,7 @@ arbTextLine linenr = do
   return (TextLine indent text linenr)
 
 -- lnfunc takes a line and returns something >= to it.  It may return
--- NoLine.
+-- Nothing.
 arbNode :: LineNumber -> Int -> (LineNumber -> Gen LineNumber) -> Gen Node
 arbNode ln depth lnfunc = do
   -- generate the head, then generate some children.
@@ -160,7 +162,7 @@ arbNode ln depth lnfunc = do
         -- so scan for the largest that they've done so.
         let mxline :: Int
             mxline = maximum $ map (\l -> toNumber 0 (tlLineNum l)) $ getTextLines child
-            nxln = if mxline == 0 then NoLine else Line mxline
+            nxln = if mxline == 0 then Nothing else Just mxline
         nxtChildLn <- lnfunc nxln
         return (nxtChildLn, xs ++ [child])
   linenr <- lnfunc ln
@@ -173,19 +175,19 @@ instance Arbitrary Node where
   arbitrary = do
     let nl_thresh = 25
         zero_thresh = 50
-        lnfunc (NoLine) = return NoLine
-        lnfunc (Line x) = do
+        lnfunc (Nothing) = return Nothing
+        lnfunc (Just x) = do
           offset <- choose (1, 100)
           if offset < nl_thresh
-            then return NoLine
+            then return Nothing
             else if offset < zero_thresh
-                 then return $ Line (x+1)
-                 else return $ Line (x + (offset - zero_thresh))
-    arbNode (Line 1) 1 lnfunc
+                 then return $ Just (x+1)
+                 else return $ Just (x + (offset - zero_thresh))
+    arbNode (Just 1) 1 lnfunc
 
 instance Arbitrary TextLine where
   arbitrary = do
     linenr <- arbitrary
-    line <- elements [NoLine, Line linenr]
+    line <- elements [Nothing, Just linenr]
     text <- arbTextLine line
     return text

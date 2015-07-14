@@ -16,7 +16,7 @@ import Text.Parsec
 import Text.Regex.Posix
 
 mkLine :: Int -> LineNumber
-mkLine n = (Just (Sum n)) :: LineNumber
+mkLine n = (Just n) :: LineNumber
 
 -- * Issue <-> Org Mapping
 
@@ -57,16 +57,20 @@ makeIssueOrgDrawer fstLine depth issue =
         (kUrl, iUrl issue)]
   in makeDrawerLines fstLine depth "PROPERTIES" props
 
+appendLines (Nothing:_) = Nothing
+appendLines (a:b:xs) = appendLines ((lineAdd a b):xs)
+appendLines [(Just a)] = Just a
+
 makeIssueOrgNode :: LineNumber -> Int -> Issue -> String
 makeIssueOrgNode fstLine depth issue =
   let indent = take depth $ repeat ' '
       heading = makeIssueOrgHeading fstLine depth issue
-      drawer = makeIssueOrgDrawer (mappend fstLine (mkLine 1)) depth issue
+      drawer = makeIssueOrgDrawer (lineAdd fstLine (mkLine 1)) depth issue
       url_text = indent ++ "- [[" ++ (iUrl issue) ++ "][Issue Link]]"
-      url = TextLine depth url_text (mconcat [fstLine, mkLine 1, mkLine (length drawer)])
+      url = TextLine depth url_text (appendLines [fstLine, mkLine 1, mkLine (length drawer)])
       body = drawer ++ [url] ++ (
         getTextLines $ makeIssueSubNode (depth+1) (
-           mconcat [fstLine, mkLine 2, mkLine $ length drawer]) issue)
+           appendLines [fstLine, mkLine 2, mkLine $ length drawer]) issue)
       node_text = [tlText $ heading] ++ (map tlText body)
   in unlines $ node_text
 
@@ -169,8 +173,8 @@ makeIssueSubNode depth fst_line iss =
       issueStartingFrom _ [] = []
       issueStartingFrom line_nr (e:es) =
         let cur_child = makeIssueLine depth line_nr e
-        in cur_child ++ (issueStartingFrom (mappend line_nr (mkLine $ length cur_child)) es)
-      children = issueStartingFrom (mappend fst_line (mkLine 1)) $ events iss
+        in cur_child ++ (issueStartingFrom (lineAdd line_nr (mkLine $ length cur_child)) es)
+      children = issueStartingFrom (lineAdd fst_line (mkLine 1)) $ events iss
   in ChildNode $ Node depth Nothing [] children "ISSUE EVENTS" (
     TextLine depth (prefix++" ISSUE EVENTS") fst_line)
 
