@@ -8,9 +8,9 @@ import Data.Maybe
 import Data.Issue
 import Data.Time.Calendar
 import Data.Time.Clock
-import Data.Time.Format
-import System.Locale
-
+import Data.Time.Locale.Compat
+import qualified Data.Time.Format as TF
+-- import qualified System.Locale as SL
 
 data DepthTaggedTag str = DepthTaggedTag Int (Tag str) deriving (Eq)
 
@@ -135,7 +135,7 @@ scanUpdateBox when user tags =
 parseIssueUpdate tags =
   let no_comment = "(No comment was entered for this change.)"
       date_text = trim . innerText . fst . matchExternalTag "<span class=date" $ tags
-      parsed_date = parseTime defaultTimeLocale "%b %e, %Y" date_text
+      parsed_date = TF.parseTime defaultTimeLocale "%b %e, %Y" date_text
       when = maybe (UTCTime (ModifiedJulianDay 0) 0) id parsed_date
       user = innerText $ take 3 $ dropWhile (~/= "<a class=userlink") $ tags
       comment =
