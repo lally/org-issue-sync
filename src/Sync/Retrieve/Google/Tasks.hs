@@ -4,19 +4,17 @@ module Sync.Retrieve.Google.Tasks where
 import Control.Applicative
 import Control.Monad
 import Data.Aeson
-import Data.Time.Clock.POSIX
 import Data.Hashable
 import Data.Issue
 import Data.Maybe
 import Data.Monoid
-import Data.Time
-import Data.Time.LocalTime
+--import Data.Time
 import Debug.Trace
 import Network.Google.OAuth2
 import Network.HTTP.Conduit
 import Network.HTTP.Types (hAuthorization)
-import System.Locale (defaultTimeLocale)
 import Text.Regex.Posix
+import Data.Time.Locale.Compat
 
 import qualified Data.ByteString.Char8 as B8
 import qualified Data.ByteString.Lazy.Char8 as L8
@@ -24,8 +22,12 @@ import qualified Data.HashMap.Strict as HM
 import qualified Data.List as L
 import qualified Data.Vector as V
 import qualified Data.Text as T
+import qualified Data.Time.Clock as CLK
+import qualified Data.Time.Clock.POSIX as CP
+import qualified Data.Time.LocalTime as LT
+import qualified Data.Time.Format as TF
 
-data RFCTime = RFCTime UTCTime deriving (Eq, Show)
+data RFCTime = RFCTime CLK.UTCTime deriving (Eq, Show)
 getTime (RFCTime t) = t
 
 data Task = Task
@@ -61,11 +63,11 @@ fromRfc3399 :: T.Text -> RFCTime
 fromRfc3399 str =
   -- Formats pulled from Data.Time.RFC3399, which didn't compile for me.
   let formats = ["%FT%TZ", "%FT%T%z", "%FT%T%Q%z", "%FT%T%QZ"]
-      tryParse fmt = parseTime defaultTimeLocale fmt $ T.unpack str
+      tryParse fmt = TF.parseTime defaultTimeLocale fmt $ T.unpack str
       parse_successes = filter isJust $ map tryParse formats
   in if length parse_successes > 0
-     then RFCTime $ zonedTimeToUTC $ fromJust $ head parse_successes
-     else trace ("Failed parse of " ++ (T.unpack str)) $ RFCTime $ posixSecondsToUTCTime (fromIntegral 0)
+     then RFCTime $ LT.zonedTimeToUTC $ fromJust $ head parse_successes
+     else trace ("Failed parse of " ++ (T.unpack str)) $ RFCTime $ CP.posixSecondsToUTCTime (fromIntegral 0)
 
 instance FromJSON IssueStatus where
   parseJSON (String s) =
