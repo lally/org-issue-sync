@@ -56,9 +56,9 @@ flag network-uri
 
 
 library
-  exposed-modules:     Sync.Retrieve.GitHub.GitHub, Sync.Retrieve.Google.Code,
-                       Sync.Retrieve.Google.Tasks, Data.Issue, Data.OrgIssue,
-                       Sync.Retrieve
+  exposed-modules:     Sync.Retrieve.GitHub.GitHub, Sync.Retrieve.Google.Code, 
+                       Sync.Retrieve.Google.Tasks, Sync.Retrieve.Google.Code.Parse, 
+                       Data.Issue, Data.OrgIssue, Sync.Retrieve
 
   hs-source-dirs:      src
   build-depends:       base >=4.7 && <4.9, HTTP >= 4000, cassava >= 0.4.2.0,
