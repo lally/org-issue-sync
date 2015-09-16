@@ -21,11 +21,6 @@ import Test.QuickCheck hiding ((.&.))
 import Test.QuickCheck.Gen (elements)
 import Test.QuickCheck.Modifiers (getPositive)
 
-lappend :: LineNumber -> LineNumber -> LineNumber
-lappend Nothing _ = Nothing
-lappend (Just _) (Nothing) = Nothing
-lappend (Just a) (Just b) = Just (a+b)
-
 allPrintableChars = filter (\c -> isPrint c && c /= '\n') $ map chr [0..0x7f]
 lineWidth = 78
 
