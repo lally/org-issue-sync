@@ -10,7 +10,6 @@ import Data.Time.Calendar
 import Data.Time.Clock
 import Data.Time.Locale.Compat
 import qualified Data.Time.Format as TF
--- import qualified System.Locale as SL
 
 data DepthTaggedTag str = DepthTaggedTag Int (Tag str) deriving (Eq)
 
